@@ -1,6 +1,6 @@
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
-import type { ComponentMatch, Issue, UINode } from '../types.ts';
+import type { ComponentMatch, Issue, UINode } from '../types';
 
 export interface ComparisonConfig {
   layoutTolerance?: number;

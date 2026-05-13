@@ -4,12 +4,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { execFile } from 'child_process';
-import { ComparisonEngine } from './src/services/comparisonEngine.ts';
-import { DOMCaptureService } from './src/services/domCaptureService.ts';
-import { FigmaService } from './src/services/figmaService.ts';
-import { MappingEngine } from './src/services/mappingEngine.ts';
-import { isValidRepository, normalizeRepository } from './src/lib/githubIssue.ts';
-import type { UINode } from './src/types.ts';
+import { ComparisonEngine } from './src/services/comparisonEngine';
+import { DOMCaptureService } from './src/services/domCaptureService';
+import { FigmaService } from './src/services/figmaService';
+import { MappingEngine } from './src/services/mappingEngine';
+import { isValidRepository, normalizeRepository } from './src/lib/githubIssue';
+import type { UINode } from './src/types';
 
 dotenv.config();
 dotenv.config({ path: '.env.local' });

@@ -1,4 +1,4 @@
-import type { ComponentMatch, UINode } from '../types.ts';
+import type { ComponentMatch, UINode } from '../types';
 
 export class MappingEngine {
   matchNodes(figmaNodes: UINode[], domNodes: UINode[]): ComponentMatch[] {

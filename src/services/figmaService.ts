@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Layout, Styles, UINode } from '../types.ts';
+import type { Layout, Styles, UINode } from '../types';
 
 const FIGMA_API_BASE = 'https://api.figma.com/v1';
 const DEFAULT_MAX_FIGMA_NODES = Number(process.env.MAX_FIGMA_NODES || 250);

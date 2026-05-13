@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 import type { Browser, Page } from 'playwright';
-import type { Layout, UINode } from '../types.ts';
+import type { Layout, UINode } from '../types';
 
 export class DOMCaptureService {
   private browser?: Browser;

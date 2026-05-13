@@ -1,4 +1,4 @@
-import { isValidRepository, normalizeRepository } from '../../../src/lib/githubIssue.ts';
+import { isValidRepository, normalizeRepository } from '../../../src/lib/githubIssue';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
