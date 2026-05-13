@@ -4,11 +4,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { execFile } from 'child_process';
-import { ComparisonEngine } from './src/services/comparisonEngine';
-import { DOMCaptureService } from './src/services/domCaptureService';
-import { FigmaService } from './src/services/figmaService';
-import { MappingEngine } from './src/services/mappingEngine';
-import { isValidRepository, normalizeRepository } from './src/lib/githubIssue';
+import { ComparisonEngine } from './src/services/comparisonEngine.js';
+import { DOMCaptureService } from './src/services/domCaptureService.js';
+import { FigmaService } from './src/services/figmaService.js';
+import { MappingEngine } from './src/services/mappingEngine.js';
+import { isValidRepository, normalizeRepository } from './src/lib/githubIssue.js';
 import type { UINode } from './src/types';
 
 dotenv.config();

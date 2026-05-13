@@ -1,7 +1,7 @@
-import { ComparisonEngine } from '../services/comparisonEngine';
-import { DOMCaptureService } from '../services/domCaptureService';
-import { FigmaService } from '../services/figmaService';
-import { MappingEngine } from '../services/mappingEngine';
+import { ComparisonEngine } from '../services/comparisonEngine.js';
+import { DOMCaptureService } from '../services/domCaptureService.js';
+import { FigmaService } from '../services/figmaService.js';
+import { MappingEngine } from '../services/mappingEngine.js';
 import type { UINode } from '../types';
 
 const MAX_VISUAL_MATCHES = Number(process.env.MAX_VISUAL_MATCHES || 10);

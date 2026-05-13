@@ -17,7 +17,7 @@ export default async function handler(req: any, res: any) {
   });
 
   try {
-    const { runDesignQA } = await import('../../src/lib/designQaRunner');
+    const { runDesignQA } = await import('../../src/lib/designQaRunner.js');
     const report = await Promise.race([runDesignQA(req.body || {}), timeout]);
     res.status(200).json(report);
   } catch (error: any) {
