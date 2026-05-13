@@ -1,13 +1,15 @@
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 
 if (process.env.VERCEL) {
   console.log('Skipping Playwright browser download on Vercel; @sparticuz/chromium is bundled for serverless capture.');
   process.exit(0);
 }
 
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const require = createRequire(import.meta.url);
+const playwrightCli = require.resolve('playwright/cli');
 
-execFileSync(npx, ['playwright', 'install', 'chromium'], {
+execFileSync(process.execPath, [playwrightCli, 'install', 'chromium'], {
   stdio: 'inherit',
   env: {
     ...process.env,
