@@ -1,0 +1,140 @@
+name: QC Bug Report
+description: File a bug report.
+title: "[Page]: "
+labels: []
+assignees: []
+type: "Bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide details about the issue you're experiencing!
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      description: Select the type of issue
+      options:
+        - UI
+        - Functional
+        - Typography
+        - Content
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: testing-url
+    attributes:
+      label: Testing URL
+      description: Provide the URL where the issue can be observed
+      placeholder: ex. https://computan.com
+    validations:
+      required: true
+
+  - type: input
+    id: section
+    attributes:
+      label: Webpage Section
+      description: Name of the section where the issue occurs
+      placeholder: ex. Header, Footer, Newsletter
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Description (optional)
+      description: Provide Description (optional)
+      placeholder: e.g., Where do you face this issue?
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual-results
+    attributes:
+      label: Actual Results
+      description: Describe the actual results. Attach a screenshot if possible.
+      placeholder: Describe the issue or attach a screenshot
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-results
+    attributes:
+      label: Expected Results
+      description: What did you expect to happen?
+      placeholder: Describe the expected behavior
+    validations:
+      required: false
+
+  - type: dropdown
+    id: device-name
+    attributes:
+      label: Device Type
+      description: Which device are you using?
+      options:
+        - Desktop
+        - Mobile
+        - Tablet
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: other-device-name
+    attributes:
+      label: Enter Device Model
+      description: If this issue exists in a specific model, please specify your device here.
+      placeholder: ex. Custom Device
+    validations:
+      required: false
+
+  - type: dropdown
+    id: browsers
+    attributes:
+      label: Browser
+      description: What browser are you using?
+      options:
+        - Chrome
+        - Firefox
+        - Safari
+        - Microsoft Edge
+        - Opera
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: screen-resolution
+    attributes:
+      label: Screen Resolution (For Responsiveness Issues)
+      description: Provide the screen resolution of your device (only if this issue is related to responsiveness)
+      placeholder: ex. 1920x1080
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce (Optional)
+      description: Describe the steps to reproduce the issue
+      placeholder: List the steps that led to the issue
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: typography-properties
+    attributes:
+      label: Typography Property
+      description: For typography related issues only
+      options:
+        - label: Font Family
+        - label: Font Weight
+        - label: Line Height
+        - label: Font Size
+        - label: Font Style
+        - label: Font Colour
+    validations:
+      required: false

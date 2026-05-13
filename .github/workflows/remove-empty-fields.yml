@@ -1,0 +1,54 @@
+permissions:
+  issues: write
+
+name: Remove Empty Fields
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  remove-empty-fields:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove empty fields, 'No response' entries, and unselected typography properties
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const issueBody = context.payload.issue.body;
+            const lines = issueBody.split('\n');
+
+            let cleanedLines = [];
+            let typographyHeadingAdded = false;
+
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i] === '### Typography Property') {
+                i += 1;
+                continue;
+              }
+
+              if (lines[i + 2] === '_No response_') {
+                i += 2;
+                continue;
+              }
+
+              if (lines[i].startsWith('- [')) {
+                if (lines[i].includes('[x]')) {
+                  if (!typographyHeadingAdded) {
+                    cleanedLines.push('### Typography Property');
+                    typographyHeadingAdded = true;
+                  }
+                  cleanedLines.push(lines[i]);
+                }
+              } else {
+                cleanedLines.push(lines[i]);
+              }
+            }
+
+            const cleanedBody = cleanedLines.join('\n');
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: cleanedBody
+            });
