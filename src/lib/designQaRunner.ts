@@ -1,0 +1,316 @@
+import { ComparisonEngine } from '../services/comparisonEngine.ts';
+import { DOMCaptureService } from '../services/domCaptureService.ts';
+import { FigmaService } from '../services/figmaService.ts';
+import { MappingEngine } from '../services/mappingEngine.ts';
+import type { UINode } from '../types.ts';
+
+const MAX_VISUAL_MATCHES = Number(process.env.MAX_VISUAL_MATCHES || 10);
+
+export async function runDesignQA(body: any) {
+  const { figmaUrl, pageUrl, viewport, preset, figmaPageName, figmaNodeId, figmaToken } = body;
+  if (!figmaUrl || !pageUrl) throw httpError(400, 'Figma URL and Page URL are required');
+  const activeFigmaToken = String(figmaToken || '').trim() || process.env.FIGMA_ACCESS_TOKEN;
+  if (!activeFigmaToken) throw httpError(401, 'Figma access token is required. Add it in the dashboard Figma Access Token field or set FIGMA_ACCESS_TOKEN in .env.local.');
+
+  const { fileId, nodeId } = parseFigmaTarget(figmaUrl, figmaNodeId);
+  if (!nodeId && !figmaPageName) {
+    throw httpError(400, 'This Figma file is too large for a full-file scan. Open the specific frame in Figma, copy its URL with node-id, and paste that URL here, or enter a Figma Node ID.');
+  }
+
+  const figmaService = new FigmaService(activeFigmaToken);
+  const domService = new DOMCaptureService();
+  const mappingEngine = new MappingEngine();
+  const comparisonEngine = new ComparisonEngine({
+    layoutTolerance: process.env.COMP_LAYOUT_TOLERANCE ? parseFloat(process.env.COMP_LAYOUT_TOLERANCE) : undefined,
+    spacingTolerance: process.env.COMP_SPACING_TOLERANCE ? parseFloat(process.env.COMP_SPACING_TOLERANCE) : undefined,
+    typographyTolerance: process.env.COMP_TYPO_TOLERANCE ? parseFloat(process.env.COMP_TYPO_TOLERANCE) : undefined,
+    preset,
+  });
+
+  console.log(`[QA] Checking Figma token for file ${fileId}`);
+  await figmaService.checkToken();
+  console.log('[QA] Extracting Figma nodes');
+  const figmaNodes = await figmaService.extractFile(fileId, { nodeId, pageName: figmaPageName });
+  console.log(`[QA] Figma nodes extracted: ${figmaNodes.length}`);
+
+  try {
+    console.log(`[QA] Capturing target page: ${pageUrl}`);
+    const { nodes: domNodes, screenshot: domScreenshot } = await domService.start(pageUrl, viewport);
+    console.log(`[QA] DOM roots captured: ${domNodes.length}`);
+    const designMatch = analyzeDesignIdentity(figmaNodes, domNodes, pageUrl);
+    console.log(`[QA] Design identity check: ${designMatch.status} (${designMatch.score}%)`);
+
+    if (designMatch.status === 'mismatch') {
+      console.log('[QA] Target URL identity does not match Figma design. Skipping component comparison.');
+      const mismatchResults = comparisonEngine.compare(
+        flattenNodes(figmaNodes).map((figmaNode) => ({
+          figmaNode,
+          domNode: null,
+          confidence: 0,
+          issues: [],
+          score: 0,
+        })),
+      );
+
+      return {
+        id: Math.random().toString(36).slice(2, 11),
+        timestamp: new Date().toISOString(),
+        figmaFileId: fileId,
+        pageUrl,
+        overallScore: 0,
+        designMatch,
+        matches: mismatchResults,
+        screenshot: domScreenshot,
+        summary: {
+          totalComponents: figmaNodes.length,
+          matchedComponents: 0,
+          totalIssues: mismatchResults.reduce((acc, result) => acc + result.issues.length, 0),
+          passCount: 0,
+          failCount: mismatchResults.length,
+        },
+      };
+    }
+
+    console.log('[QA] Matching nodes');
+    const matches = mappingEngine.matchNodes(figmaNodes, domNodes);
+    console.log(`[QA] Matches created: ${matches.length}`);
+    console.log('[QA] Comparing matched nodes');
+    const results = comparisonEngine.compare(matches);
+
+    const visualMatches = selectVisualMatches(results);
+    console.log(`[QA] Generating visual assets for ${visualMatches.length} prioritized matches`);
+    const nodeIds = visualMatches.map((match) => match.figmaNode.id);
+    const nodeImageUrls = await figmaService.getNodesImages(fileId, nodeIds);
+
+    for (const match of visualMatches) {
+      if (!match.domNode) continue;
+
+      try {
+        const figmaImageUrl = nodeImageUrls[match.figmaNode.id];
+        let figmaBase64 = '';
+
+        if (figmaImageUrl) {
+          const imageBuffer = await figmaService.getImageBuffer(figmaImageUrl);
+          figmaBase64 = imageBuffer.toString('base64');
+          match.figmaNodeImage = `data:image/png;base64,${figmaBase64}`;
+        }
+
+        const domNodeBase64 = await domService.captureNodeImage(match.domNode.layout);
+        if (domNodeBase64) match.domNodeImage = `data:image/png;base64,${domNodeBase64}`;
+
+        if (match.score < 100 && figmaBase64 && domNodeBase64) {
+          const visualResult = await comparisonEngine.generateVisualDiffFromBase64(figmaBase64, domNodeBase64);
+          if (visualResult.diffBase64) match.visualDiff = `data:image/png;base64,${visualResult.diffBase64}`;
+        }
+      } catch (error) {
+        console.error(`Failed to generate visual data for ${match.figmaNode.name}:`, error);
+      }
+    }
+    console.log('[QA] Report ready');
+
+    const matchedComponents = results.filter((result) => result.domNode).length;
+    const overallScore = calculateOverallScore(results, designMatch.status);
+
+    return {
+      id: Math.random().toString(36).slice(2, 11),
+      timestamp: new Date().toISOString(),
+      figmaFileId: fileId,
+      pageUrl,
+      overallScore,
+      designMatch,
+      matches: results,
+      screenshot: domScreenshot,
+      summary: {
+        totalComponents: figmaNodes.length,
+        matchedComponents,
+        totalIssues: results.reduce((acc, result) => acc + result.issues.length, 0),
+        passCount: results.filter((result) => result.score >= 90).length,
+        failCount: results.filter((result) => result.score < 90).length,
+      },
+    };
+  } finally {
+    await domService.close();
+  }
+}
+
+function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>, designMatchStatus?: 'matched' | 'mismatch' | 'unknown') {
+  if (designMatchStatus === 'mismatch') return 0;
+  if (results.length === 0) return 0;
+
+  const matchedResults = results.filter((result) => result.domNode);
+  if (matchedResults.length === 0) return 0;
+
+  const matchedRatio = matchedResults.length / results.length;
+  const averageConfidence = matchedResults.reduce((sum, result) => sum + result.confidence, 0) / matchedResults.length;
+  const strongMatchRatio = results.filter((result) => result.domNode && result.confidence >= 0.85).length / results.length;
+
+  const designDoesNotMatch =
+    matchedRatio < 0.15 ||
+    strongMatchRatio < 0.08 ||
+    (matchedRatio < 0.35 && averageConfidence < 0.85);
+
+  if (designDoesNotMatch) return 0;
+
+  return Math.round(results.reduce((acc, result) => acc + result.score, 0) / results.length);
+}
+
+function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl: string) {
+  const figmaSignals = collectIdentitySignals(figmaNodes, 'figma');
+  const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(domNodes, 'target')].filter(uniqueOnly);
+  const importantFigmaSignals = figmaSignals.filter((signal) => !isGenericSignal(signal));
+  const matchedSignals = importantFigmaSignals
+    .filter((figmaSignal) => targetSignals.some((targetSignal) => signalsMatch(figmaSignal, targetSignal)))
+    .filter(uniqueOnly)
+    .slice(0, 8);
+
+  const score = importantFigmaSignals.length === 0 ? 0 : Math.round((matchedSignals.length / Math.min(importantFigmaSignals.length, 8)) * 100);
+  const hasFigmaIdentity = importantFigmaSignals.length > 0;
+  const hasTargetIdentity = targetSignals.length > 0;
+  const status: 'matched' | 'mismatch' | 'unknown' = matchedSignals.length > 0 ? 'matched' : hasFigmaIdentity && hasTargetIdentity ? 'mismatch' : 'unknown';
+  const message =
+    status === 'matched'
+      ? 'Figma design matches with the target URL. Test comparison begins.'
+      : status === 'mismatch'
+        ? 'Figma and target URL are not same.'
+        : 'Design identity could not be confirmed from logo or brand text. Test comparison continues.';
+
+  return {
+    status,
+    score,
+    message,
+    figmaSignals: importantFigmaSignals.slice(0, 8),
+    targetSignals: targetSignals.slice(0, 8),
+    matchedSignals,
+  };
+}
+
+function collectIdentitySignals(nodes: UINode[], source: 'figma' | 'target') {
+  const flattened = flattenNodes(nodes);
+  const signals: string[] = [];
+
+  for (const node of flattened) {
+    const y = node.layout?.y || 0;
+    const name = normalizeSignal(node.name);
+    const text = normalizeSignal(node.text || '');
+    const isIdentityNode = /logo|brand|header|nav|site|company/i.test(node.name) || y < 360 || node.type === 'TEXT';
+
+    if (!isIdentityNode) continue;
+    if (text) signals.push(text);
+    if (source === 'figma' && /logo|brand|company|site/i.test(node.name) && name) signals.push(name);
+    if (source === 'target' && node.type === 'IMAGE' && name) signals.push(name);
+  }
+
+  return signals.filter((signal) => signal.length >= 3 && !isGenericSignal(signal)).filter(uniqueOnly).slice(0, 30);
+}
+
+function collectDomainSignals(pageUrl: string) {
+  try {
+    const host = new URL(pageUrl).hostname.replace(/^www\./, '');
+    return host
+      .split(/[.\-_]/)
+      .map(normalizeSignal)
+      .filter((signal) => signal.length >= 3 && !isGenericSignal(signal));
+  } catch {
+    return [];
+  }
+}
+
+function flattenNodes(nodes: UINode[]): UINode[] {
+  return nodes.flatMap((node) => [node, ...(node.children ? flattenNodes(node.children) : [])]);
+}
+
+function signalsMatch(figmaSignal: string, targetSignal: string) {
+  if (figmaSignal === targetSignal) return true;
+  if (figmaSignal.length >= 4 && targetSignal.includes(figmaSignal)) return true;
+  if (targetSignal.length >= 4 && figmaSignal.includes(targetSignal)) return true;
+
+  const figmaWords = new Set(figmaSignal.split(' ').filter((word) => word.length >= 3));
+  const targetWords = new Set(targetSignal.split(' ').filter((word) => word.length >= 3));
+  if (figmaWords.size === 0 || targetWords.size === 0) return false;
+  const overlap = [...figmaWords].filter((word) => targetWords.has(word)).length;
+  return overlap / Math.min(figmaWords.size, targetWords.size) >= 0.75;
+}
+
+function normalizeSignal(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\.(png|jpg|jpeg|svg|webp)$/g, '')
+    .replace(/[_\-|/\\]+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isGenericSignal(signal: string) {
+  const generic = new Set([
+    'logo',
+    'brand',
+    'header',
+    'footer',
+    'nav',
+    'navbar',
+    'menu',
+    'home',
+    'about',
+    'contact',
+    'services',
+    'button',
+    'image',
+    'icon',
+    'frame',
+    'group',
+    'section',
+    'container',
+    'main',
+    'body',
+    'page',
+    'website',
+    'design',
+  ]);
+  return generic.has(signal) || /^\d+$/.test(signal);
+}
+
+function uniqueOnly<T>(item: T, index: number, items: T[]) {
+  return items.indexOf(item) === index;
+}
+
+function selectVisualMatches(results: ReturnType<ComparisonEngine['compare']>) {
+  const severityRank = { high: 0, medium: 1, low: 2 };
+  return results
+    .filter((match) => match.domNode && match.issues.length > 0)
+    .sort((a, b) => {
+      const aSeverity = a.issues[0]?.severity || 'low';
+      const bSeverity = b.issues[0]?.severity || 'low';
+      const severityDelta = severityRank[aSeverity] - severityRank[bSeverity];
+      if (severityDelta !== 0) return severityDelta;
+      return a.score - b.score;
+    })
+    .slice(0, Math.max(0, MAX_VISUAL_MATCHES));
+}
+
+function parseFigmaTarget(figmaUrl: string, explicitNodeId?: string) {
+  let fileId = '';
+  let nodeId = '';
+
+  try {
+    const figmaUrlObj = new URL(figmaUrl);
+    const fileIdMatch = figmaUrlObj.pathname.match(/(?:file|design|proto|board)\/([a-zA-Z0-9\-_]+)/);
+    if (fileIdMatch) {
+      fileId = fileIdMatch[1];
+      nodeId = figmaUrlObj.searchParams.get('node-id')?.replace(/-/g, ':').replace(/%3A/gi, ':') || '';
+    }
+  } catch {
+    if (/^[a-zA-Z0-9\-_]{15,60}$/.test(figmaUrl)) fileId = figmaUrl;
+  }
+
+  if (explicitNodeId) nodeId = explicitNodeId.trim().replace(/-/g, ':').replace(/%3A/gi, ':');
+  if (!fileId) throw httpError(400, 'Invalid Figma URL or key. Expected https://www.figma.com/design/:id/... or a valid file key.');
+
+  return { fileId, nodeId };
+}
+
+function httpError(statusCode: number, message: string) {
+  const error = new Error(message) as Error & { statusCode: number };
+  error.statusCode = statusCode;
+  return error;
+}

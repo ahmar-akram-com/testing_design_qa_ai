@@ -1,3 +1,5 @@
+import { runDesignQA } from '../../src/lib/designQaRunner';
+
 const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || 180000);
 
 export default async function handler(req: any, res: any) {
@@ -17,7 +19,6 @@ export default async function handler(req: any, res: any) {
   });
 
   try {
-    const { runDesignQA } = await import('../../server.ts');
     const report = await Promise.race([runDesignQA(req.body || {}), timeout]);
     res.status(200).json(report);
   } catch (error: any) {
