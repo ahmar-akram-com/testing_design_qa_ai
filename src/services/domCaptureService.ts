@@ -7,11 +7,12 @@ export class DOMCaptureService {
 
   async start(url: string, viewportName = 'desktop'): Promise<{ nodes: UINode[]; screenshot: string }> {
     process.env.PLAYWRIGHT_BROWSERS_PATH ||= '0';
-    const { chromium } = await import('playwright');
+    const { chromium: playwrightChromium } = await import('playwright');
+    const launchOptions = await this.getLaunchOptions();
 
-    this.browser = await chromium.launch({
+    this.browser = await playwrightChromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      ...launchOptions,
     });
 
     const viewport = this.viewportFor(viewportName);
@@ -146,5 +147,22 @@ export class DOMCaptureService {
     if (name === 'mobile') return { width: 375, height: 812 };
     if (name === 'tablet') return { width: 768, height: 1024 };
     return { width: 1440, height: 900 };
+  }
+
+  private async getLaunchOptions() {
+    const fallbackArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+
+    if (!isServerless) {
+      return { args: fallbackArgs };
+    }
+
+    const chromium = (await import('@sparticuz/chromium')).default;
+    chromium.setGraphicsMode = false;
+
+    return {
+      args: [...chromium.args, '--disable-dev-shm-usage', '--disable-gpu'],
+      executablePath: await chromium.executablePath(),
+    };
   }
 }
