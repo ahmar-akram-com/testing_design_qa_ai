@@ -156,7 +156,7 @@ async function getGitHubToken(explicitToken = '') {
   });
 }
 
-async function runDesignQA(body: any) {
+export async function runDesignQA(body: any) {
   const { figmaUrl, pageUrl, viewport, preset, figmaPageName, figmaNodeId, figmaToken } = body;
   if (!figmaUrl || !pageUrl) throw httpError(400, 'Figma URL and Page URL are required');
   const activeFigmaToken = String(figmaToken || '').trim() || process.env.FIGMA_ACCESS_TOKEN;
@@ -465,7 +465,9 @@ function httpError(statusCode: number, message: string) {
   return error;
 }
 
-startServer().catch((error) => {
-  console.error('Failed to start server:', error);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  });
+}

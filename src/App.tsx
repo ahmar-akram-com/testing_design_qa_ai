@@ -90,8 +90,7 @@ export default function App() {
     setErrorStatus(null);
 
     try {
-      const healthCheck = await fetch('/api/health', { cache: 'no-store' });
-      if (!healthCheck.ok) throw new Error('Server health check failed.');
+      await waitForServerHealth();
 
       const response = await fetch('/api/qa/run', {
         method: 'POST',
@@ -184,6 +183,24 @@ export default function App() {
       <AnalysisLoadingOverlay show={isLoading} />
     </div>
   );
+}
+
+async function waitForServerHealth() {
+  let lastError = '';
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const healthCheck = await fetch('/api/health', { cache: 'no-store' });
+      if (healthCheck.ok) return;
+      lastError = `Health endpoint returned ${healthCheck.status}`;
+    } catch (error: any) {
+      lastError = error.message || 'Health endpoint unavailable';
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+  }
+
+  throw new Error(`Server health check failed. ${lastError}`);
 }
 
 function DashboardView({ records, currentReport, onOpenComparison }: { records: RunRecord[]; currentReport: QAReport | null; onOpenComparison: () => void }) {

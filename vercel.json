@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/qa/run.ts": {
+      "maxDuration": 60
+    },
+    "api/github/issues/bulk.ts": {
+      "maxDuration": 60
+    }
+  }
+}
