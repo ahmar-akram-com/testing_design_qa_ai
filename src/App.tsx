@@ -98,7 +98,7 @@ export default function App() {
         body: JSON.stringify({ figmaUrl, pageUrl, viewport, tolerance, preset, figmaPageName, figmaNodeId, figmaToken }),
       });
 
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.error || 'Automation failed');
 
       setReport(data);
@@ -201,6 +201,17 @@ async function waitForServerHealth() {
   }
 
   throw new Error(`Server health check failed. ${lastError}`);
+}
+
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(response.ok ? 'Server returned an invalid JSON response.' : text);
+  }
 }
 
 function DashboardView({ records, currentReport, onOpenComparison }: { records: RunRecord[]; currentReport: QAReport | null; onOpenComparison: () => void }) {

@@ -341,7 +341,7 @@ function IssueBacklog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repository: normalizedRepo, githubToken, issues: drafts }),
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.error || 'GitHub issue logging failed');
 
       const allIssuesLogged = targetIssues.length === issues.length;
@@ -806,6 +806,17 @@ function severityTextClass(severity: Issue['severity']) {
   if (severity === 'high') return 'text-rose-600 dark:text-rose-400';
   if (severity === 'medium') return 'text-amber-600 dark:text-amber-400';
   return 'text-blue-600 dark:text-blue-400';
+}
+
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(response.ok ? 'Server returned an invalid JSON response.' : text);
+  }
 }
 
 function Field({ label, value, onChange, placeholder, invalid }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; invalid?: boolean }) {
