@@ -1,4 +1,3 @@
-import { chromium } from 'playwright';
 import type { Browser, Page } from 'playwright';
 import type { Layout, UINode } from '../types';
 
@@ -7,6 +6,9 @@ export class DOMCaptureService {
   private page?: Page;
 
   async start(url: string, viewportName = 'desktop'): Promise<{ nodes: UINode[]; screenshot: string }> {
+    process.env.PLAYWRIGHT_BROWSERS_PATH ||= '0';
+    const { chromium } = await import('playwright');
+
     this.browser = await chromium.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],

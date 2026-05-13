@@ -12,7 +12,7 @@
     "clean": "rimraf dist",
     "lint": "tsc --noEmit",
     "start": "node server.ts",
-    "postinstall": "npx playwright install chromium"
+    "postinstall": "node scripts/install-playwright.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
