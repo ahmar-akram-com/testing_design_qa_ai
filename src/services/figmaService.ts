@@ -32,7 +32,7 @@ export class FigmaService {
       const response = await this.requestWithRetry(() =>
         axios.get(`${FIGMA_API_BASE}/files/${fileId}/nodes`, {
           headers: { 'X-Figma-Token': this.accessToken },
-          params: { ids: options.nodeId },
+          params: { ids: options.nodeId, depth: DEFAULT_FIGMA_DEPTH },
           timeout: FIGMA_REQUEST_TIMEOUT_MS,
         }),
       );

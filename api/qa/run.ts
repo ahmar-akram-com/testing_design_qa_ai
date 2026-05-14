@@ -28,10 +28,11 @@ export default async function handler(req: any, res: any) {
     if (process.env.VERCEL) {
       process.env.MAX_VISUAL_MATCHES ||= '0';
       process.env.MAX_LOGO_CANDIDATES ||= '1';
-      process.env.FIGMA_REQUEST_TIMEOUT_MS ||= '12000';
-      process.env.FIGMA_REQUEST_RETRIES ||= '1';
-      process.env.MAX_FIGMA_NODES ||= '70';
-      process.env.MAX_DOM_NODES ||= '220';
+      process.env.FIGMA_FILE_DEPTH ||= '2';
+      process.env.FIGMA_REQUEST_TIMEOUT_MS ||= '8000';
+      process.env.FIGMA_REQUEST_RETRIES ||= '0';
+      process.env.MAX_FIGMA_NODES ||= '50';
+      process.env.MAX_DOM_NODES ||= '160';
       process.env.TARGET_HTML_TIMEOUT_MS ||= '6000';
     }
     const { runDesignQA } = await import('../../src/lib/designQaRunner.js');
