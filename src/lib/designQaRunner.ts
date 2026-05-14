@@ -424,16 +424,39 @@ async function compareLogoImagesFromHtml(figmaNodes: UINode[], targetLogoImages:
 }
 
 async function fetchTargetHtml(pageUrl: string) {
-  const response = await fetch(pageUrl, {
-    headers: {
+  const headers = [
+    {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Upgrade-Insecure-Requests': '1',
+    },
+    {
       'User-Agent': 'Mozilla/5.0 DesignQA-AI/1.0',
       Accept: 'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
     },
-    signal: AbortSignal.timeout(TARGET_HTML_TIMEOUT_MS),
-  });
+  ];
 
-  if (!response.ok) throw httpError(response.status, `Target URL returned HTTP ${response.status}.`);
-  return response.text();
+  let lastResponse: Response | null = null;
+  for (const requestHeaders of headers) {
+    const response = await fetch(pageUrl, {
+      headers: requestHeaders,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(TARGET_HTML_TIMEOUT_MS),
+    });
+    lastResponse = response;
+    if (response.ok) return response.text();
+    if (response.status !== 429 && response.status !== 403) break;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+
+  throw httpError(lastResponse?.status || 500, `Target URL returned HTTP ${lastResponse?.status || 500}.`);
 }
 
 async function fetchBinary(url: string, timeoutMs: number) {

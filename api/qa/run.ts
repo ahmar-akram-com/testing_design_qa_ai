@@ -74,8 +74,14 @@ function isUpstreamRateLimitError(error: any) {
 }
 
 function createRateLimitReport(body: any, error: any) {
-  const isFigma = error?.code === 'FIGMA_RATE_LIMIT' || String(error?.message || '').toLowerCase().includes('figma');
+  const sourceUrl = String(error?.config?.url || error?.request?.responseURL || '');
+  const isFigma =
+    error?.code === 'FIGMA_RATE_LIMIT' ||
+    String(error?.message || '').toLowerCase().includes('figma') ||
+    sourceUrl.includes('api.figma.com');
   const source = isFigma ? 'Figma' : 'Upstream service';
+  const retryAfter = error?.response?.headers?.['retry-after'];
+  const retryHint = retryAfter ? ` Retry after about ${retryAfter} seconds.` : ' Wait a short cooldown, then retry.';
 
   return {
     id: Math.random().toString(36).slice(2, 11),
@@ -86,12 +92,12 @@ function createRateLimitReport(body: any, error: any) {
     designMatch: {
       status: 'unknown',
       score: 0,
-      message: `${source} rate limit reached. Comparison was paused before design matching could start.`,
+      message: `${source} rate limit is active. Comparison is waiting for cooldown.`,
       checkName: `${source} rate limit`,
-      reason: `${source} temporarily blocked additional requests. The app now retries briefly, reuses cached Figma responses, and returns this controlled report instead of failing with a raw 429 error.`,
+      reason: `${source} temporarily blocked additional requests.${retryHint} Use Retry Comparison after the cooldown, or Hard Refresh Session to clear browser-side state and load the newest deployment.`,
       figmaSignals: isFigma ? ['Figma API rate limit exceeded'] : [],
-      targetSignals: [],
-      matchedSignals: [],
+      targetSignals: sourceUrl ? [sourceUrl] : [],
+      matchedSignals: ['Cooldown required'],
     },
     matches: [],
     screenshot: '',

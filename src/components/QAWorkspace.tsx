@@ -80,6 +80,10 @@ export function QAWorkspace({
     );
   }, [report]);
   const canInspectReport = Boolean(report?.matches.length);
+  const isRateLimitReport = Boolean(
+    report?.designMatch?.checkName?.toLowerCase().includes('rate limit') ||
+    report?.designMatch?.message.toLowerCase().includes('rate limit'),
+  );
 
   if (!report) {
     return (
@@ -170,7 +174,33 @@ export function QAWorkspace({
         />
       )}
 
-      {report.designMatch?.status !== 'matched' && !canInspectReport ? (
+      {isRateLimitReport && !canInspectReport ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center text-amber-800 shadow-sm dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+          <AlertCircle className="mx-auto mb-3 h-10 w-10" />
+          <h3 className="text-lg font-semibold">API cooldown active</h3>
+          <p className="mx-auto mt-2 max-w-2xl text-sm opacity-85">
+            The comparison is ready, but an upstream service is temporarily blocking requests. Wait for the cooldown, then retry the same comparison. Hard refresh clears browser-side records and reloads the newest deployment.
+          </p>
+          <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={onRun}
+              disabled={isLoading}
+              className="inline-flex h-10 items-center justify-center rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {isLoading ? 'Retrying...' : 'Retry Comparison'}
+            </button>
+            <button
+              type="button"
+              onClick={onLoadSession}
+              disabled={isLoading}
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-current/20 px-4 text-sm font-medium transition hover:bg-white/30 disabled:opacity-50"
+            >
+              Hard Refresh Session
+            </button>
+          </div>
+        </div>
+      ) : report.designMatch?.status !== 'matched' && !canInspectReport ? (
         <div className={cn('rounded-xl border p-8 text-center shadow-sm', report.designMatch?.status === 'mismatch' ? 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100')}>
           <AlertCircle className="mx-auto mb-3 h-10 w-10" />
           <h3 className="text-lg font-semibold">Comparison did not start</h3>
