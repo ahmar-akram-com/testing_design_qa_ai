@@ -30,7 +30,9 @@ export default async function handler(req: any, res: any) {
       process.env.MAX_LOGO_CANDIDATES ||= '1';
       process.env.FIGMA_FILE_DEPTH ||= '2';
       process.env.FIGMA_REQUEST_TIMEOUT_MS ||= '8000';
-      process.env.FIGMA_REQUEST_RETRIES ||= '0';
+      process.env.FIGMA_REQUEST_RETRIES ||= '1';
+      process.env.FIGMA_RETRY_DELAY_CAP_MS ||= '4000';
+      process.env.FIGMA_CACHE_TTL_MS ||= '900000';
       process.env.MAX_FIGMA_NODES ||= '50';
       process.env.MAX_DOM_NODES ||= '160';
       process.env.TARGET_HTML_TIMEOUT_MS ||= '6000';
@@ -40,10 +42,47 @@ export default async function handler(req: any, res: any) {
     res.status(200).json(report);
   } catch (error: any) {
     console.error('QA Run failed:', error);
+    if (isFigmaRateLimitError(error)) {
+      res.status(200).json(createFigmaRateLimitReport(req.body || {}));
+      return;
+    }
     res.status(error.message?.startsWith('TIMEOUT') ? 504 : error.statusCode || 500).json({
       error: error.message || 'QA run failed',
     });
   }
+}
+
+function isFigmaRateLimitError(error: any) {
+  return error?.statusCode === 429 || error?.code === 'FIGMA_RATE_LIMIT' || String(error?.message || '').includes('Figma API 429');
+}
+
+function createFigmaRateLimitReport(body: any) {
+  return {
+    id: Math.random().toString(36).slice(2, 11),
+    timestamp: new Date().toISOString(),
+    figmaFileId: extractFigmaFileId(String(body?.figmaUrl || '')),
+    pageUrl: String(body?.pageUrl || ''),
+    overallScore: 0,
+    designMatch: {
+      status: 'unknown',
+      score: 0,
+      message: 'Figma rate limit reached. Comparison was paused before design matching could start.',
+      checkName: 'Figma API rate limit',
+      reason: 'Figma temporarily blocked additional API reads for this token. The app now retries briefly and reuses cached Figma responses, but this run needs to be started again after the limit clears.',
+      figmaSignals: ['Figma API rate limit exceeded'],
+      targetSignals: [],
+      matchedSignals: [],
+    },
+    matches: [],
+    screenshot: '',
+    summary: {
+      totalComponents: 0,
+      matchedComponents: 0,
+      totalIssues: 0,
+      passCount: 0,
+      failCount: 0,
+    },
+  };
 }
 
 function createTimeoutUnknownReport(body: any) {

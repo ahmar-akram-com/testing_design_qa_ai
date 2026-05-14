@@ -6,6 +6,16 @@ const DEFAULT_MAX_FIGMA_NODES = Number(process.env.MAX_FIGMA_NODES || 250);
 const DEFAULT_FIGMA_DEPTH = Number(process.env.FIGMA_FILE_DEPTH || 3);
 const FIGMA_REQUEST_TIMEOUT_MS = Number(process.env.FIGMA_REQUEST_TIMEOUT_MS || 45000);
 const FIGMA_REQUEST_RETRIES = Number(process.env.FIGMA_REQUEST_RETRIES || 5);
+const FIGMA_RETRY_DELAY_CAP_MS = Number(process.env.FIGMA_RETRY_DELAY_CAP_MS || 5000);
+const FIGMA_CACHE_TTL_MS = Number(process.env.FIGMA_CACHE_TTL_MS || 10 * 60 * 1000);
+
+type CacheEntry<T> = {
+  expiresAt: number;
+  data: T;
+};
+
+const sharedFigmaCache = new Map<string, CacheEntry<any>>();
+const sharedFigmaInflight = new Map<string, Promise<any>>();
 
 export class FigmaService {
   private fileCache = new Map<string, any>();
@@ -29,15 +39,16 @@ export class FigmaService {
     this.traversalLimit = DEFAULT_MAX_FIGMA_NODES;
 
     if (options?.nodeId) {
-      const response = await this.requestWithRetry(() =>
+      const cacheKey = this.cacheKey(fileId, `node:${options.nodeId}:depth:${DEFAULT_FIGMA_DEPTH}`);
+      const data = await this.cachedRequest(cacheKey, () =>
         axios.get(`${FIGMA_API_BASE}/files/${fileId}/nodes`, {
           headers: { 'X-Figma-Token': this.accessToken },
           params: { ids: options.nodeId, depth: DEFAULT_FIGMA_DEPTH },
           timeout: FIGMA_REQUEST_TIMEOUT_MS,
-        }),
+        }).then((response) => response.data),
       );
 
-      const node = response.data.nodes?.[options.nodeId]?.document;
+      const node = data.nodes?.[options.nodeId]?.document;
       if (!node) throw new Error(`Node ${options.nodeId} not found in file.`);
 
       if (node.type === 'CANVAS' || node.type === 'DOCUMENT') {
@@ -46,17 +57,17 @@ export class FigmaService {
       return this.traverseNodes([node]);
     }
 
-    let figmaFile = this.fileCache.get(fileId);
+    const fileCacheKey = this.cacheKey(fileId, `file:depth:${DEFAULT_FIGMA_DEPTH}`);
+    let figmaFile = this.fileCache.get(fileCacheKey) || this.getCached(fileCacheKey);
     if (!figmaFile) {
-      const response = await this.requestWithRetry(() =>
+      figmaFile = await this.cachedRequest(fileCacheKey, () =>
         axios.get(`${FIGMA_API_BASE}/files/${fileId}`, {
           headers: { 'X-Figma-Token': this.accessToken },
           params: { depth: DEFAULT_FIGMA_DEPTH },
           timeout: FIGMA_REQUEST_TIMEOUT_MS,
-        }),
+        }).then((response) => response.data),
       );
-      figmaFile = response.data;
-      this.fileCache.set(fileId, figmaFile);
+      this.fileCache.set(fileCacheKey, figmaFile);
     }
 
     const document = figmaFile.document;
@@ -125,9 +136,14 @@ export class FigmaService {
 
         if (status === 429 && retries > 0) {
           const retryAfter = error.response.headers['retry-after'];
-          const nextDelay = retryAfter ? parseInt(retryAfter, 10) * 1000 || delay : delay;
+          const requestedDelay = retryAfter ? parseInt(retryAfter, 10) * 1000 || delay : delay;
+          const nextDelay = Math.min(requestedDelay, FIGMA_RETRY_DELAY_CAP_MS);
           await new Promise((resolve) => setTimeout(resolve, nextDelay));
           return this.requestWithRetry(fn, retries - 1, Math.min(nextDelay * 2, 30000));
+        }
+
+        if (status === 429) {
+          throw this.httpError(429, 'Figma API rate limit exceeded. Wait a moment and run the comparison again, or use a more specific Figma frame/component URL.', 'FIGMA_RATE_LIMIT');
         }
 
         if (status === 401) {
@@ -207,5 +223,44 @@ export class FigmaService {
   private figmaColorToHex(color: { r: number; g: number; b: number }): string {
     const toHex = (channel: number) => Math.round(channel * 255).toString(16).padStart(2, '0');
     return `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
+  }
+
+  private cacheKey(fileId: string, scope: string) {
+    return `${this.accessToken.length}:${this.accessToken.slice(-10)}:${fileId}:${scope}`;
+  }
+
+  private getCached<T>(key: string): T | null {
+    const cached = sharedFigmaCache.get(key);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      sharedFigmaCache.delete(key);
+      return null;
+    }
+    return cached.data as T;
+  }
+
+  private async cachedRequest<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const cached = this.getCached<T>(key);
+    if (cached) return cached;
+
+    const inflight = sharedFigmaInflight.get(key);
+    if (inflight) return inflight as Promise<T>;
+
+    const request = fn()
+      .then((data) => {
+        sharedFigmaCache.set(key, { data, expiresAt: Date.now() + FIGMA_CACHE_TTL_MS });
+        return data;
+      })
+      .finally(() => sharedFigmaInflight.delete(key));
+
+    sharedFigmaInflight.set(key, request);
+    return request;
+  }
+
+  private httpError(statusCode: number, message: string, code?: string) {
+    const error = new Error(message) as Error & { statusCode: number; code?: string };
+    error.statusCode = statusCode;
+    error.code = code;
+    return error;
   }
 }
