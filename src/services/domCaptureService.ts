@@ -21,19 +21,23 @@ export class DOMCaptureService {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
     });
     this.page = await context.newPage();
+    const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+    const networkTimeout = isServerless ? 12000 : 25000;
+    const loadTimeout = isServerless ? 9000 : 20000;
+    const settleDelay = isServerless ? 500 : 1500;
 
     try {
-      await this.page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
+      await this.page.goto(url, { waitUntil: isServerless ? 'domcontentloaded' : 'networkidle', timeout: networkTimeout });
     } catch {
-      await this.page.goto(url, { waitUntil: 'load', timeout: 20000 });
+      await this.page.goto(url, { waitUntil: 'load', timeout: loadTimeout });
     }
 
     await this.page.waitForLoadState('domcontentloaded');
-    await this.page.waitForTimeout(1500);
+    await this.page.waitForTimeout(settleDelay);
 
     const fullHeight = await this.page.evaluate<number>('document.documentElement.scrollHeight');
     const fullWidth = await this.page.evaluate<number>('document.documentElement.scrollWidth');
-    const limitHeight = Math.max(viewport.height, Math.min(fullHeight, 5000));
+    const limitHeight = Math.max(viewport.height, Math.min(fullHeight, isServerless ? 3200 : 5000));
     const limitWidth = Math.max(viewport.width, fullWidth);
 
     await this.page.setViewportSize({ width: limitWidth, height: limitHeight });

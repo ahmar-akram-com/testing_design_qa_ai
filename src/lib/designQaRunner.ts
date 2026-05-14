@@ -5,9 +5,10 @@ import { MappingEngine } from '../services/mappingEngine.js';
 import { PNG } from 'pngjs';
 import type { UINode } from '../types';
 
-const MAX_VISUAL_MATCHES = Number(process.env.MAX_VISUAL_MATCHES || 10);
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+const MAX_VISUAL_MATCHES = Number(process.env.MAX_VISUAL_MATCHES || (IS_SERVERLESS ? 0 : 10));
 const LOGO_IMAGE_MATCH_THRESHOLD = Number(process.env.LOGO_IMAGE_MATCH_THRESHOLD || 72);
-const MAX_LOGO_CANDIDATES = Number(process.env.MAX_LOGO_CANDIDATES || 4);
+const MAX_LOGO_CANDIDATES = Number(process.env.MAX_LOGO_CANDIDATES || (IS_SERVERLESS ? 1 : 4));
 
 export async function runDesignQA(body: any) {
   const { figmaUrl, pageUrl, viewport, preset, figmaPageName, figmaNodeId, figmaToken } = body;
@@ -73,7 +74,7 @@ export async function runDesignQA(body: any) {
     const visualMatches = selectVisualMatches(results);
     console.log(`[QA] Generating visual assets for ${visualMatches.length} prioritized matches`);
     const nodeIds = visualMatches.map((match) => match.figmaNode.id);
-    const nodeImageUrls = await figmaService.getNodesImages(fileId, nodeIds);
+    const nodeImageUrls = visualMatches.length ? await figmaService.getNodesImages(fileId, nodeIds) : {};
 
     for (const match of visualMatches) {
       if (!match.domNode) continue;

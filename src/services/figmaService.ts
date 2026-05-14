@@ -5,6 +5,7 @@ const FIGMA_API_BASE = 'https://api.figma.com/v1';
 const DEFAULT_MAX_FIGMA_NODES = Number(process.env.MAX_FIGMA_NODES || 250);
 const DEFAULT_FIGMA_DEPTH = Number(process.env.FIGMA_FILE_DEPTH || 3);
 const FIGMA_REQUEST_TIMEOUT_MS = Number(process.env.FIGMA_REQUEST_TIMEOUT_MS || 45000);
+const FIGMA_REQUEST_RETRIES = Number(process.env.FIGMA_REQUEST_RETRIES || 5);
 
 export class FigmaService {
   private fileCache = new Map<string, any>();
@@ -111,7 +112,7 @@ export class FigmaService {
     return Buffer.from(response.data, 'binary');
   }
 
-  async requestWithRetry<T>(fn: () => Promise<T>, retries = 5, delay = 2000): Promise<T> {
+  async requestWithRetry<T>(fn: () => Promise<T>, retries = FIGMA_REQUEST_RETRIES, delay = 1500): Promise<T> {
     try {
       return await fn();
     } catch (error: any) {

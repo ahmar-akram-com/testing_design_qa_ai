@@ -99,7 +99,12 @@ export default function App() {
       });
 
       const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.error || 'Automation failed');
+      if (!response.ok) {
+        const fallback = response.status === 504
+          ? 'The analysis took too long for the deployed server. Use a smaller Figma frame/node, or run locally for larger pages.'
+          : 'Automation failed';
+        throw new Error(data.error || fallback);
+      }
 
       setReport(data);
       setSelectedMatch(data.matches?.[0] ?? null);
