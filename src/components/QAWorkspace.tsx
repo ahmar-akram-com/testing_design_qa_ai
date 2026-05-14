@@ -79,6 +79,7 @@ export function QAWorkspace({
       })),
     );
   }, [report]);
+  const canInspectReport = Boolean(report?.matches.length);
 
   if (!report) {
     return (
@@ -153,7 +154,7 @@ export function QAWorkspace({
         <Summary label="Critical Failures" value={report.summary.failCount} tone="bad" />
       </div>
 
-      {report.designMatch?.status === 'matched' && (
+      {canInspectReport && (
         <IssueBacklog
           report={report}
           issues={reportIssues}
@@ -169,7 +170,7 @@ export function QAWorkspace({
         />
       )}
 
-      {report.designMatch?.status !== 'matched' ? (
+      {report.designMatch?.status !== 'matched' && !canInspectReport ? (
         <div className={cn('rounded-xl border p-8 text-center shadow-sm', report.designMatch?.status === 'mismatch' ? 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100')}>
           <AlertCircle className="mx-auto mb-3 h-10 w-10" />
           <h3 className="text-lg font-semibold">Comparison did not start</h3>

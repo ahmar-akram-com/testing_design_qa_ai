@@ -35,7 +35,16 @@ export async function runDesignQA(body: any) {
   console.log(`[QA] Checking Figma token for file ${fileId}`);
   if (!IS_SERVERLESS) await figmaService.checkToken();
   console.log('[QA] Extracting Figma nodes');
-  const figmaNodes = await figmaService.extractFile(fileId, { nodeId, pageName: figmaPageName });
+  let figmaNodes: UINode[];
+  try {
+    figmaNodes = await figmaService.extractFile(fileId, { nodeId, pageName: figmaPageName });
+  } catch (error) {
+    if (IS_SERVERLESS && isRateLimitError(error)) {
+      console.warn('[QA] Figma API rate-limited. Running deployed target-page fallback QA.');
+      return runServerlessRateLimitFallbackQA({ fileId, pageUrl, error });
+    }
+    throw error;
+  }
   console.log(`[QA] Figma nodes extracted: ${figmaNodes.length}`);
 
   if (IS_SERVERLESS) {
@@ -137,6 +146,75 @@ export async function runDesignQA(body: any) {
   } finally {
     await domService.close();
   }
+}
+
+async function runServerlessRateLimitFallbackQA({ fileId, pageUrl, error }: { fileId: string; pageUrl: string; error: unknown }) {
+  const html = await fetchTargetHtml(pageUrl);
+  const targetSnapshot = buildTargetSnapshotFromHtml(html, pageUrl);
+  const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(targetSnapshot.nodes, 'target')]
+    .filter(uniqueOnly)
+    .slice(0, 8);
+  const rootNode = targetSnapshot.nodes[0];
+  const rateLimitMessage = error instanceof Error ? error.message : 'Figma API rate limit blocked design extraction.';
+  const fallbackMatches = buildRateLimitFallbackMatches(rootNode, pageUrl, rateLimitMessage);
+
+  return {
+    id: Math.random().toString(36).slice(2, 11),
+    timestamp: new Date().toISOString(),
+    figmaFileId: fileId,
+    pageUrl,
+    overallScore: 0,
+    designMatch: {
+      status: 'unknown' as const,
+      score: 0,
+      message: 'Target page QA fallback completed while Figma extraction is rate-limited.',
+      checkName: 'Target-page fallback QA',
+      reason: 'Figma temporarily blocked design extraction, so the system inspected the target URL and generated a fallback QA item instead of stopping the workflow. Run again after the Figma limit clears for the full design comparison.',
+      figmaSignals: ['Figma API rate limit'],
+      targetSignals,
+      matchedSignals: ['Target URL captured'],
+    },
+    matches: fallbackMatches,
+    screenshot: '',
+    summary: {
+      totalComponents: fallbackMatches.length,
+      matchedComponents: fallbackMatches.filter((match) => match.domNode).length,
+      totalIssues: fallbackMatches.reduce((acc, match) => acc + match.issues.length, 0),
+      passCount: 0,
+      failCount: fallbackMatches.length,
+    },
+  };
+}
+
+function buildRateLimitFallbackMatches(targetRoot: UINode, pageUrl: string, rateLimitMessage: string) {
+  const targetText = flattenNodes([targetRoot])
+    .map((node) => node.text || node.name)
+    .filter(Boolean)
+    .slice(0, 8)
+    .join(' | ');
+  const fallbackExpected: UINode = {
+    id: 'figma-rate-limit-fallback',
+    name: 'Figma design extraction',
+    type: 'FRAME',
+    layout: { x: 0, y: 0, width: 1440, height: 900 },
+    styles: {},
+    text: 'Figma design data should be available for full visual comparison.',
+    children: [],
+  };
+
+  return [{
+    figmaNode: fallbackExpected,
+    domNode: targetRoot,
+    confidence: 0,
+    score: 0,
+    issues: [{
+      type: 'presence' as const,
+      property: 'figmaDesignData',
+      expected: 'Full Figma frame/component data available for comparison',
+      actual: `${rateLimitMessage} Target URL was captured for fallback QA: ${pageUrl}. Signals found: ${targetText || 'No readable target-page text found'}.`,
+      severity: 'high' as const,
+    }],
+  }];
 }
 
 async function runFastServerlessQA({
@@ -245,6 +323,20 @@ function resolveServerlessDesignMatch(
     reason: 'No distinctive shared identity signal or component/content structure was found between the selected Figma design and target URL.',
     matchedSignals: [],
   };
+}
+
+function isRateLimitError(error: unknown) {
+  const value = error as { statusCode?: number; code?: string; response?: { status?: number }; message?: string };
+  const message = String(value?.message || '');
+  return (
+    value?.statusCode === 429 ||
+    value?.response?.status === 429 ||
+    value?.code === 'FIGMA_RATE_LIMIT' ||
+    message.includes('Figma API 429') ||
+    message.includes('status code 429') ||
+    message.includes('HTTP 429') ||
+    message.toLowerCase().includes('rate limit')
+  );
 }
 
 function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>, designMatchStatus?: 'matched' | 'mismatch' | 'unknown') {
