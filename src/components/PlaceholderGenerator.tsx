@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { Loader2, Sparkles } from 'lucide-react';
 
 export function PlaceholderGenerator({
@@ -21,20 +20,25 @@ export function PlaceholderGenerator({
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error('GEMINI_API_KEY is missing from environment variables');
 
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [{ text: `A clean wireframe UI placeholder for a ${nodeType} named "${nodeName}". No text.` }],
-        },
-        config: {
-          imageConfig: { aspectRatio: '4:3' },
-        },
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: `A clean wireframe UI placeholder for a ${nodeType} named "${nodeName}". No text.` }],
+          }],
+          generationConfig: {
+            imageConfig: { aspectRatio: '4:3' },
+          },
+        }),
       });
 
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error?.message || `Gemini request failed with ${response.status}`);
+
+      for (const part of data.candidates?.[0]?.content?.parts || []) {
         if (part.inlineData) {
-          onPlaceholderGenerated(`data:image/png;base64,${part.inlineData.data}`);
+          onPlaceholderGenerated(`data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`);
           return;
         }
       }
