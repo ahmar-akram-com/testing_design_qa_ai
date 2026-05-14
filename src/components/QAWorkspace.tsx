@@ -206,8 +206,8 @@ export function QAWorkspace({
           <h3 className="text-lg font-semibold">Comparison did not start</h3>
           <p className="mx-auto mt-2 max-w-2xl text-sm opacity-85">
             {report.designMatch?.status === 'mismatch'
-              ? 'Figma design file and target URL link are different, so the test was stopped before component comparison. Use the correct target URL or select the exact Figma frame/component and run the test again.'
-              : 'The system could not complete a genuine design identity check, so it did not mark the target URL as matched or different. Select a specific Figma frame/component and run the test again.'}
+              ? 'The comparison could not continue because the run returned a mismatch state. Select the exact Figma frame/component and run the test again.'
+              : 'The system could not finish the component comparison. Select a smaller Figma frame/component or run the local version for larger pages.'}
           </p>
         </div>
       ) : (
@@ -302,8 +302,8 @@ function DesignIdentityBanner({ designMatch }: { designMatch: NonNullable<QARepo
           </div>
           <p className="mt-1 text-sm opacity-85">{designMatch.reason}</p>
           <div className="mt-4 grid gap-3 text-xs md:grid-cols-4">
-            <IdentitySignalPanel label="Check" values={[designMatch.checkName || 'Unique design identity check']} />
-            <IdentitySignalPanel label="Matched signals" values={designMatch.matchedSignals} empty="No shared identity signal" />
+            <IdentitySignalPanel label="Check" values={[designMatch.checkName || 'Comparison status']} />
+            <IdentitySignalPanel label="Matched signals" values={designMatch.matchedSignals} empty="No shared signal" />
             <IdentitySignalPanel label="Figma signals checked" values={designMatch.figmaSignals} empty="No unique Figma signal found" />
             <IdentitySignalPanel label="Target signals checked" values={designMatch.targetSignals} empty="No unique target signal found" />
           </div>

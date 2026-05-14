@@ -28,7 +28,6 @@ export default async function handler(req: any, res: any) {
     process.env.PLAYWRIGHT_BROWSERS_PATH ||= '0';
     if (process.env.VERCEL) {
       process.env.MAX_VISUAL_MATCHES ||= '0';
-      process.env.MAX_LOGO_CANDIDATES ||= '1';
       process.env.FIGMA_FILE_DEPTH ||= '2';
       process.env.FIGMA_REQUEST_TIMEOUT_MS ||= '8000';
       process.env.FIGMA_REQUEST_RETRIES ||= '1';
@@ -122,8 +121,8 @@ function createTimeoutUnknownReport(body: any) {
       status: 'unknown',
       score: 0,
       message: 'Design match could not be verified in the deployed runtime. Comparison was stopped.',
-      checkName: 'Design match preflight',
-      reason: 'The deployed analysis timed out before it could complete a genuine design identity check, so it did not mark the target URL as matched or different.',
+      checkName: 'Comparison timeout',
+      reason: 'The deployed analysis timed out before it could finish the component comparison. Use a smaller Figma frame/component or run the local version for larger pages.',
       figmaSignals: [],
       targetSignals: [],
       matchedSignals: [],
