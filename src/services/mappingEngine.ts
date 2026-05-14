@@ -10,7 +10,7 @@ export class MappingEngine {
 
       for (const domNode of flattenedDOM) {
         const score = this.calculateSimilarity(figmaNode, domNode);
-        if (score > 0.7 && (!bestMatch || score > bestMatch.score)) {
+        if (score >= 0.55 && (!bestMatch || score > bestMatch.score)) {
           bestMatch = { node: domNode, score };
         }
       }
@@ -27,21 +27,25 @@ export class MappingEngine {
 
   private calculateSimilarity(f: UINode, d: UINode): number {
     let score = 0;
-    if (this.isSimilarType(f, d)) score += 0.4;
+    if (this.isSimilarType(f, d)) score += 0.35;
 
     if (f.text && d.text) {
-      score += this.stringSimilarity(f.text, d.text) * 0.4;
+      score += this.stringSimilarity(f.text, d.text) * 0.45;
+    } else if (f.text || d.text) {
+      score += this.stringSimilarity(f.text || f.name, d.text || d.name) * 0.25;
     } else if (!f.text && !d.text) {
-      score += 0.2;
+      score += this.stringSimilarity(f.name, d.name) * 0.15;
     }
+
+    score += this.stringSimilarity(f.name, d.name) * 0.15;
 
     const ratioF = (f.layout.width || 1) / (f.layout.height || 1);
     const ratioD = (d.layout.width || 1) / (d.layout.height || 1);
     const ratioDiff = Math.abs(ratioF - ratioD) / Math.max(ratioF, ratioD);
 
-    if (ratioDiff < 0.2) score += 0.4;
-    else if (ratioDiff < 0.5) score += 0.2;
-    else if (ratioDiff < 0.8) score += 0.1;
+    if (ratioDiff < 0.2) score += 0.2;
+    else if (ratioDiff < 0.5) score += 0.1;
+    else if (ratioDiff < 0.8) score += 0.05;
 
     return Math.min(score, 1);
   }
@@ -58,14 +62,38 @@ export class MappingEngine {
   }
 
   private stringSimilarity(s1: string, s2: string): number {
+    s1 = this.normalizeText(s1);
+    s2 = this.normalizeText(s2);
     if (s1 === s2) return 1;
     if (!s1 || !s2) return 0;
+    if (s1.length >= 4 && s2.includes(s1)) return 0.9;
+    if (s2.length >= 4 && s1.includes(s2)) return 0.9;
+
+    const tokenScore = this.tokenOverlap(s1, s2);
 
     const longer = s1.length > s2.length ? s1 : s2;
     const shorter = s1.length > s2.length ? s2 : s1;
-    if (longer.length > shorter.length * 2) return 0;
+    if (longer.length > shorter.length * 2) return tokenScore;
     if (longer.length > 200) return s1.slice(0, 50) === s2.slice(0, 50) ? 0.5 : 0;
-    return (longer.length - this.editDistance(longer, shorter)) / longer.length;
+    const editScore = (longer.length - this.editDistance(longer, shorter)) / longer.length;
+    return Math.max(tokenScore, editScore);
+  }
+
+  private normalizeText(value: string) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[_\-|/\\]+/g, ' ')
+      .replace(/[^a-z0-9 ]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private tokenOverlap(s1: string, s2: string) {
+    const first = new Set(s1.split(' ').filter((word) => word.length >= 3));
+    const second = new Set(s2.split(' ').filter((word) => word.length >= 3));
+    if (first.size === 0 || second.size === 0) return 0;
+    const overlap = [...first].filter((word) => second.has(word)).length;
+    return overlap / Math.max(first.size, second.size);
   }
 
   private editDistance(s1: string, s2: string): number {

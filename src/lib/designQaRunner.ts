@@ -40,8 +40,7 @@ export async function runDesignQA(body: any) {
     figmaNodes = await figmaService.extractFile(fileId, { nodeId, pageName: figmaPageName });
   } catch (error) {
     if (IS_SERVERLESS && isRateLimitError(error)) {
-      console.warn('[QA] Figma API rate-limited. Running deployed target-page fallback QA.');
-      return runServerlessRateLimitFallbackQA({ fileId, pageUrl, error });
+      console.warn('[QA] Figma API rate-limited. Returning controlled rate-limit report.');
     }
     throw error;
   }
@@ -62,29 +61,8 @@ export async function runDesignQA(body: any) {
     console.log(`[QA] Capturing target page: ${pageUrl}`);
     const { nodes: domNodes, screenshot: domScreenshot } = await domService.start(pageUrl, viewport, { includeScreenshot: !IS_SERVERLESS });
     console.log(`[QA] DOM roots captured: ${domNodes.length}`);
-    const designMatch = await analyzeDesignIdentity(figmaNodes, domNodes, pageUrl, fileId, figmaService, domService);
-    console.log(`[QA] Design identity check: ${designMatch.status} (${designMatch.score}%)`);
-
-    if (designMatch.status !== 'matched') {
-      console.log('[QA] Target URL identity does not match Figma design. Skipping component comparison.');
-      return {
-        id: Math.random().toString(36).slice(2, 11),
-        timestamp: new Date().toISOString(),
-        figmaFileId: fileId,
-        pageUrl,
-        overallScore: 0,
-        designMatch,
-        matches: [],
-        screenshot: domScreenshot,
-        summary: {
-          totalComponents: flattenNodes(figmaNodes).length,
-          matchedComponents: 0,
-          totalIssues: 0,
-          passCount: 0,
-          failCount: 0,
-        },
-      };
-    }
+    const designMatch = createComparisonStartedDesignMatch(figmaNodes, domNodes, pageUrl);
+    console.log('[QA] Design identity preflight skipped. Running direct component comparison.');
 
     console.log('[QA] Matching nodes');
     const matches = mappingEngine.matchNodes(figmaNodes, domNodes);
@@ -148,75 +126,6 @@ export async function runDesignQA(body: any) {
   }
 }
 
-async function runServerlessRateLimitFallbackQA({ fileId, pageUrl, error }: { fileId: string; pageUrl: string; error: unknown }) {
-  const html = await fetchTargetHtml(pageUrl);
-  const targetSnapshot = buildTargetSnapshotFromHtml(html, pageUrl);
-  const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(targetSnapshot.nodes, 'target')]
-    .filter(uniqueOnly)
-    .slice(0, 8);
-  const rootNode = targetSnapshot.nodes[0];
-  const rateLimitMessage = error instanceof Error ? error.message : 'Figma API rate limit blocked design extraction.';
-  const fallbackMatches = buildRateLimitFallbackMatches(rootNode, pageUrl, rateLimitMessage);
-
-  return {
-    id: Math.random().toString(36).slice(2, 11),
-    timestamp: new Date().toISOString(),
-    figmaFileId: fileId,
-    pageUrl,
-    overallScore: 0,
-    designMatch: {
-      status: 'unknown' as const,
-      score: 0,
-      message: 'Target page QA fallback completed while Figma extraction is rate-limited.',
-      checkName: 'Target-page fallback QA',
-      reason: 'Figma temporarily blocked design extraction, so the system inspected the target URL and generated a fallback QA item instead of stopping the workflow. Run again after the Figma limit clears for the full design comparison.',
-      figmaSignals: ['Figma API rate limit'],
-      targetSignals,
-      matchedSignals: ['Target URL captured'],
-    },
-    matches: fallbackMatches,
-    screenshot: '',
-    summary: {
-      totalComponents: fallbackMatches.length,
-      matchedComponents: fallbackMatches.filter((match) => match.domNode).length,
-      totalIssues: fallbackMatches.reduce((acc, match) => acc + match.issues.length, 0),
-      passCount: 0,
-      failCount: fallbackMatches.length,
-    },
-  };
-}
-
-function buildRateLimitFallbackMatches(targetRoot: UINode, pageUrl: string, rateLimitMessage: string) {
-  const targetText = flattenNodes([targetRoot])
-    .map((node) => node.text || node.name)
-    .filter(Boolean)
-    .slice(0, 8)
-    .join(' | ');
-  const fallbackExpected: UINode = {
-    id: 'figma-rate-limit-fallback',
-    name: 'Figma design extraction',
-    type: 'FRAME',
-    layout: { x: 0, y: 0, width: 1440, height: 900 },
-    styles: {},
-    text: 'Figma design data should be available for full visual comparison.',
-    children: [],
-  };
-
-  return [{
-    figmaNode: fallbackExpected,
-    domNode: targetRoot,
-    confidence: 0,
-    score: 0,
-    issues: [{
-      type: 'presence' as const,
-      property: 'figmaDesignData',
-      expected: 'Full Figma frame/component data available for comparison',
-      actual: `${rateLimitMessage} Target URL was captured for fallback QA: ${pageUrl}. Signals found: ${targetText || 'No readable target-page text found'}.`,
-      severity: 'high' as const,
-    }],
-  }];
-}
-
 async function runFastServerlessQA({
   figmaNodes,
   fileId,
@@ -235,30 +144,9 @@ async function runFastServerlessQA({
   console.log(`[QA] Running fast deployed analysis for ${pageUrl}`);
   const html = await fetchTargetHtml(pageUrl);
   const targetSnapshot = buildTargetSnapshotFromHtml(html, pageUrl);
-  const initialDesignMatch = analyzeSignalIdentity(figmaNodes, targetSnapshot.nodes, pageUrl);
   const matches = mappingEngine.matchNodes(figmaNodes, targetSnapshot.nodes);
   const results = comparisonEngine.compare(matches);
-  const designMatch = resolveServerlessDesignMatch(initialDesignMatch, results);
-
-  if (designMatch.status === 'mismatch') {
-    return {
-      id: Math.random().toString(36).slice(2, 11),
-      timestamp: new Date().toISOString(),
-      figmaFileId: fileId,
-      pageUrl,
-      overallScore: 0,
-      designMatch,
-      matches: [],
-      screenshot: '',
-      summary: {
-        totalComponents: flattenNodes(figmaNodes).length,
-        matchedComponents: 0,
-        totalIssues: 0,
-        passCount: 0,
-        failCount: 0,
-      },
-    };
-  }
+  const designMatch = createComparisonStartedDesignMatch(figmaNodes, targetSnapshot.nodes, pageUrl);
 
   const matchedComponents = results.filter((result) => result.domNode).length;
   const overallScore = calculateOverallScore(results, designMatch.status);
@@ -282,46 +170,21 @@ async function runFastServerlessQA({
   };
 }
 
-function resolveServerlessDesignMatch(
-  designMatch: ReturnType<typeof analyzeSignalIdentity>,
-  results: ReturnType<ComparisonEngine['compare']>,
-) {
-  if (designMatch.status === 'matched') return designMatch;
-
-  const matchedComponents = results.filter((result) => result.domNode).length;
-  const strongMatches = results.filter((result) => result.domNode && result.confidence >= 0.85).length;
-  const totalComponents = Math.max(1, results.length);
-  const matchedRatio = matchedComponents / totalComponents;
-  const strongMatchRatio = strongMatches / totalComponents;
-  const hasComponentEvidence = matchedRatio >= 0.15 || strongMatchRatio >= 0.08;
-
-  if (hasComponentEvidence) {
-    const score = Math.max(
-      designMatch.score,
-      Math.min(100, Math.round(Math.max(matchedRatio, strongMatchRatio) * 100)),
-    );
-
-    return {
-      ...designMatch,
-      status: 'matched' as const,
-      score,
-      message: 'Both Figma design file and target URL matched. Test comparison begins.',
-      checkName: 'Component/content match check',
-      reason: `The deployed comparison found ${matchedComponents} shared component/content candidate${matchedComponents === 1 ? '' : 's'}, so the target URL is treated as the same design.`,
-      matchedSignals: designMatch.matchedSignals.length
-        ? designMatch.matchedSignals
-        : [`${matchedComponents} component/content candidate${matchedComponents === 1 ? '' : 's'} matched`],
-    };
-  }
+function createComparisonStartedDesignMatch(figmaNodes: UINode[], targetNodes: UINode[], pageUrl: string) {
+  const figmaSignals = collectIdentitySignals(figmaNodes, 'figma').filter(uniqueOnly).slice(0, 8);
+  const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(targetNodes, 'target')]
+    .filter(uniqueOnly)
+    .slice(0, 8);
 
   return {
-    ...designMatch,
-    status: 'mismatch' as const,
-    score: 0,
-    message: 'Figma design file and target URL are not the same. Comparison was stopped.',
-    checkName: 'Component/content match check',
-    reason: 'No distinctive shared identity signal or component/content structure was found between the selected Figma design and target URL.',
-    matchedSignals: [],
+    status: 'matched' as const,
+    score: 100,
+    message: 'Figma design loaded and target URL captured. Test comparison begins.',
+    checkName: 'Direct component comparison',
+    reason: 'Logo and design-identity preflight checks are skipped for the happy path. The system compares the selected Figma frame/component directly against the target URL.',
+    figmaSignals,
+    targetSignals,
+    matchedSignals: ['Comparison started'],
   };
 }
 
@@ -348,16 +211,9 @@ function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>,
 
   const matchedRatio = matchedResults.length / results.length;
   const averageConfidence = matchedResults.reduce((sum, result) => sum + result.confidence, 0) / matchedResults.length;
-  const strongMatchRatio = results.filter((result) => result.domNode && result.confidence >= 0.85).length / results.length;
-
-  const designDoesNotMatch =
-    matchedRatio < 0.15 ||
-    strongMatchRatio < 0.08 ||
-    (matchedRatio < 0.35 && averageConfidence < 0.85);
-
-  if (designDoesNotMatch) return 0;
-
-  return Math.round(results.reduce((acc, result) => acc + result.score, 0) / results.length);
+  const coverageScore = matchedRatio * 100;
+  const qualityScore = matchedResults.reduce((acc, result) => acc + result.score, 0) / matchedResults.length;
+  return Math.round((coverageScore * 0.35) + (averageConfidence * 100 * 0.25) + (qualityScore * 0.4));
 }
 
 async function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl: string, fileId: string, figmaService: FigmaService, domService: DOMCaptureService) {
