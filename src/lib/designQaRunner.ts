@@ -9,6 +9,7 @@ const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCT
 const MAX_VISUAL_MATCHES = Number(process.env.MAX_VISUAL_MATCHES || (IS_SERVERLESS ? 0 : 10));
 const LOGO_IMAGE_MATCH_THRESHOLD = Number(process.env.LOGO_IMAGE_MATCH_THRESHOLD || 72);
 const MAX_LOGO_CANDIDATES = Number(process.env.MAX_LOGO_CANDIDATES || (IS_SERVERLESS ? 1 : 4));
+const TARGET_HTML_TIMEOUT_MS = Number(process.env.TARGET_HTML_TIMEOUT_MS || 10000);
 
 export async function runDesignQA(body: any) {
   const { figmaUrl, pageUrl, viewport, preset, figmaPageName, figmaNodeId, figmaToken } = body;
@@ -32,10 +33,21 @@ export async function runDesignQA(body: any) {
   });
 
   console.log(`[QA] Checking Figma token for file ${fileId}`);
-  await figmaService.checkToken();
+  if (!IS_SERVERLESS) await figmaService.checkToken();
   console.log('[QA] Extracting Figma nodes');
   const figmaNodes = await figmaService.extractFile(fileId, { nodeId, pageName: figmaPageName });
   console.log(`[QA] Figma nodes extracted: ${figmaNodes.length}`);
+
+  if (IS_SERVERLESS) {
+    return runFastServerlessQA({
+      figmaNodes,
+      fileId,
+      pageUrl,
+      figmaService,
+      mappingEngine,
+      comparisonEngine,
+    });
+  }
 
   try {
     console.log(`[QA] Capturing target page: ${pageUrl}`);
@@ -125,6 +137,70 @@ export async function runDesignQA(body: any) {
   } finally {
     await domService.close();
   }
+}
+
+async function runFastServerlessQA({
+  figmaNodes,
+  fileId,
+  pageUrl,
+  figmaService,
+  mappingEngine,
+  comparisonEngine,
+}: {
+  figmaNodes: UINode[];
+  fileId: string;
+  pageUrl: string;
+  figmaService: FigmaService;
+  mappingEngine: MappingEngine;
+  comparisonEngine: ComparisonEngine;
+}) {
+  console.log(`[QA] Running fast deployed analysis for ${pageUrl}`);
+  const html = await fetchTargetHtml(pageUrl);
+  const targetSnapshot = buildTargetSnapshotFromHtml(html, pageUrl);
+  const designMatch = await compareLogoImagesFromHtml(figmaNodes, targetSnapshot.logoImages, fileId, figmaService, pageUrl);
+
+  if (designMatch.status !== 'matched') {
+    return {
+      id: Math.random().toString(36).slice(2, 11),
+      timestamp: new Date().toISOString(),
+      figmaFileId: fileId,
+      pageUrl,
+      overallScore: 0,
+      designMatch,
+      matches: [],
+      screenshot: '',
+      summary: {
+        totalComponents: flattenNodes(figmaNodes).length,
+        matchedComponents: 0,
+        totalIssues: 0,
+        passCount: 0,
+        failCount: 0,
+      },
+    };
+  }
+
+  const matches = mappingEngine.matchNodes(figmaNodes, targetSnapshot.nodes);
+  const results = comparisonEngine.compare(matches);
+  const matchedComponents = results.filter((result) => result.domNode).length;
+  const overallScore = calculateOverallScore(results, designMatch.status);
+
+  return {
+    id: Math.random().toString(36).slice(2, 11),
+    timestamp: new Date().toISOString(),
+    figmaFileId: fileId,
+    pageUrl,
+    overallScore,
+    designMatch,
+    matches: results.slice(0, Number(process.env.MAX_SERVERLESS_MATCHES || 120)),
+    screenshot: '',
+    summary: {
+      totalComponents: flattenNodes(figmaNodes).length,
+      matchedComponents,
+      totalIssues: results.reduce((acc, result) => acc + result.issues.length, 0),
+      passCount: results.filter((result) => result.score >= 90).length,
+      failCount: results.filter((result) => result.score < 90).length,
+    },
+  };
 }
 
 function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>, designMatchStatus?: 'matched' | 'mismatch' | 'unknown') {
@@ -268,6 +344,226 @@ async function compareLogoImages(figmaNodes: UINode[], domNodes: UINode[], fileI
     targetSignals: targetLabels,
     matchedSignals: matched ? [`${candidateLabel(best.figma)} -> ${candidateLabel(best.target)}`] : [],
   };
+}
+
+async function compareLogoImagesFromHtml(figmaNodes: UINode[], targetLogoImages: Array<{ url: string; label: string }>, fileId: string, figmaService: FigmaService, pageUrl: string) {
+  const figmaLogoCandidates = collectLogoImageCandidates(figmaNodes, 'figma').slice(0, MAX_LOGO_CANDIDATES);
+  const targetCandidates = targetLogoImages.slice(0, MAX_LOGO_CANDIDATES);
+  const figmaLabels = figmaLogoCandidates.map(candidateLabel).filter(uniqueOnly);
+  const targetLabels = targetCandidates.map((candidate) => normalizeSignal(candidate.label || candidate.url)).filter(Boolean).filter(uniqueOnly);
+
+  if (figmaLogoCandidates.length === 0 || targetCandidates.length === 0) {
+    return {
+      status: 'unknown' as const,
+      score: 0,
+      message: 'Logo image match could not be confirmed. Comparison was stopped.',
+      checkName: 'Logo image match check',
+      reason: figmaLogoCandidates.length === 0
+        ? 'No logo image candidate was found in the selected Figma frame/component.'
+        : 'No logo image candidate was found on the target URL.',
+      figmaSignals: figmaLabels,
+      targetSignals: targetLabels.length ? targetLabels : collectDomainSignals(pageUrl),
+      matchedSignals: [],
+    };
+  }
+
+  const figmaImageUrls = await figmaService.getNodesImages(fileId, figmaLogoCandidates.map((candidate) => candidate.id));
+  const figmaImages = await Promise.all(figmaLogoCandidates.map(async (candidate) => {
+    const imageUrl = figmaImageUrls[candidate.id];
+    if (!imageUrl) return null;
+    try {
+      const buffer = await figmaService.getImageBuffer(imageUrl);
+      return { candidate, base64: buffer.toString('base64') };
+    } catch {
+      return null;
+    }
+  }));
+
+  const targetImages = await Promise.all(targetCandidates.map(async (candidate) => {
+    try {
+      const buffer = await fetchBinary(candidate.url, 8000);
+      return { candidate, base64: buffer.toString('base64') };
+    } catch {
+      return null;
+    }
+  }));
+
+  let best: { score: number; figma: UINode; target: { url: string; label: string } } | null = null;
+  for (const figmaImage of figmaImages.filter(Boolean) as Array<{ candidate: UINode; base64: string }>) {
+    for (const targetImage of targetImages.filter(Boolean) as Array<{ candidate: { url: string; label: string }; base64: string }>) {
+      const score = compareImageFingerprints(figmaImage.base64, targetImage.base64);
+      if (!best || score > best.score) best = { score, figma: figmaImage.candidate, target: targetImage.candidate };
+    }
+  }
+
+  if (!best) {
+    return {
+      status: 'unknown' as const,
+      score: 0,
+      message: 'Logo image match could not be confirmed. Comparison was stopped.',
+      checkName: 'Logo image match check',
+      reason: 'Logo candidates were found, but one or more logo images could not be downloaded for comparison.',
+      figmaSignals: figmaLabels,
+      targetSignals: targetLabels,
+      matchedSignals: [],
+    };
+  }
+
+  const score = Math.round(best.score);
+  const matched = score >= LOGO_IMAGE_MATCH_THRESHOLD;
+  return {
+    status: matched ? 'matched' as const : 'mismatch' as const,
+    score,
+    message: matched
+      ? 'Logo image matched in Figma and target URL. Test comparison begins.'
+      : 'Target URL and Figma design are not matched because the logo image is different. Comparison was stopped.',
+    checkName: 'Logo image match check',
+    reason: matched
+      ? `The best logo image match scored ${score}%, so the target URL is treated as the same design.`
+      : `The best logo image match scored ${score}%, below the required ${LOGO_IMAGE_MATCH_THRESHOLD}%.`,
+    figmaSignals: figmaLabels,
+    targetSignals: targetLabels,
+    matchedSignals: matched ? [`${candidateLabel(best.figma)} -> ${normalizeSignal(best.target.label || best.target.url)}`] : [],
+  };
+}
+
+async function fetchTargetHtml(pageUrl: string) {
+  const response = await fetch(pageUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 DesignQA-AI/1.0',
+      Accept: 'text/html,application/xhtml+xml',
+    },
+    signal: AbortSignal.timeout(TARGET_HTML_TIMEOUT_MS),
+  });
+
+  if (!response.ok) throw httpError(response.status, `Target URL returned HTTP ${response.status}.`);
+  return response.text();
+}
+
+async function fetchBinary(url: string, timeoutMs: number) {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 DesignQA-AI/1.0' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`Failed to download image ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function buildTargetSnapshotFromHtml(html: string, pageUrl: string) {
+  const text = decodeHtml(stripHtmlNoise(html));
+  const logoImages = extractImageCandidates(html, pageUrl);
+  const textNodes = extractTextNodes(html);
+  const imageNodes = logoImages.map((image, index) => ({
+    id: `html-logo-${index}`,
+    name: 'img',
+    type: 'IMAGE',
+    layout: { x: 0, y: 40 + index * 20, width: 160, height: 60 },
+    styles: {},
+    text: image.label,
+  }));
+  const children: UINode[] = [
+    ...imageNodes,
+    ...textNodes,
+    {
+      id: 'html-page-text',
+      name: 'body',
+      type: 'FRAME',
+      layout: { x: 0, y: 0, width: 1440, height: 1200 },
+      styles: {},
+      text: text.slice(0, 800),
+    },
+  ];
+
+  return {
+    logoImages,
+    nodes: [{
+      id: 'html-root',
+      name: 'body',
+      type: 'FRAME',
+      layout: { x: 0, y: 0, width: 1440, height: 1200 },
+      styles: {},
+      text: collectDomainSignals(pageUrl).join(' '),
+      children,
+    } as UINode],
+  };
+}
+
+function extractImageCandidates(html: string, pageUrl: string) {
+  const images: Array<{ url: string; label: string; score: number }> = [];
+  const imgRegex = /<img\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = imgRegex.exec(html))) {
+    const tag = match[0];
+    const src = attrValue(tag, 'src') || attrValue(tag, 'data-src') || attrValue(tag, 'data-lazy-src');
+    if (!src || src.startsWith('data:')) continue;
+    const label = [
+      attrValue(tag, 'alt'),
+      attrValue(tag, 'title'),
+      attrValue(tag, 'class'),
+      attrValue(tag, 'id'),
+      src.split('/').pop(),
+    ].filter(Boolean).join(' ');
+    const normalized = normalizeSignal(label);
+    const logoScore = /\blogo\b|brand|site identity|navbar/.test(normalized) ? 100 : 0;
+    const earlyScore = Math.max(0, 40 - Math.floor(match.index / 4000));
+    const formatScore = /\.(svg|png|webp|jpg|jpeg)(\?|$)/i.test(src) ? 20 : 0;
+    images.push({ url: resolveUrl(src, pageUrl), label: normalized || src, score: logoScore + earlyScore + formatScore });
+  }
+
+  return images
+    .sort((a, b) => b.score - a.score)
+    .filter((image, index, items) => items.findIndex((item) => item.url === image.url) === index)
+    .slice(0, 6)
+    .map(({ url, label }) => ({ url, label }));
+}
+
+function extractTextNodes(html: string) {
+  const nodes: UINode[] = [];
+  const textRegex = /<(h1|h2|h3|p|a|button|li|span)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = textRegex.exec(html)) && nodes.length < 80) {
+    const content = decodeHtml(stripTags(match[2])).replace(/\s+/g, ' ').trim();
+    if (content.length < 3 || content.length > 180) continue;
+    nodes.push({
+      id: `html-text-${nodes.length}`,
+      name: match[1].toLowerCase(),
+      type: 'TEXT',
+      layout: { x: 0, y: 120 + nodes.length * 24, width: Math.min(900, content.length * 8), height: 24 },
+      styles: {},
+      text: content,
+    });
+  }
+  return nodes;
+}
+
+function attrValue(tag: string, name: string) {
+  const match = tag.match(new RegExp(`${name}\\s*=\\s*["']([^"']+)["']`, 'i'));
+  return match?.[1] || '';
+}
+
+function resolveUrl(value: string, pageUrl: string) {
+  try {
+    return new URL(value, pageUrl).toString();
+  } catch {
+    return value;
+  }
+}
+
+function stripHtmlNoise(html: string) {
+  return stripTags(html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+function stripTags(value: string) {
+  return value.replace(/<[^>]+>/g, ' ');
+}
+
+function decodeHtml(value: string) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 function collectLogoImageCandidates(nodes: UINode[], source: 'figma' | 'target') {
