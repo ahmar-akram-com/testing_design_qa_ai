@@ -1,4 +1,4 @@
-const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 52000 : 180000;
+const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 48000 : 180000;
 const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || DEFAULT_QA_TIMEOUT_MS);
 
 export default async function handler(req: any, res: any) {
@@ -14,7 +14,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error(`TIMEOUT: The analysis took longer than ${Math.round(QA_TIMEOUT_MS / 1000)} seconds. The report may be too large; try a smaller Figma node or set MAX_VISUAL_MATCHES lower.`)), QA_TIMEOUT_MS);
+    setTimeout(() => reject(new Error(`TIMEOUT: The analysis took longer than ${Math.round(QA_TIMEOUT_MS / 1000)} seconds. Use a specific Figma frame/node URL, reduce the target page size, or run the local version for large pages.`)), QA_TIMEOUT_MS);
   });
 
   try {
@@ -24,7 +24,8 @@ export default async function handler(req: any, res: any) {
       process.env.MAX_LOGO_CANDIDATES ||= '1';
       process.env.FIGMA_REQUEST_TIMEOUT_MS ||= '12000';
       process.env.FIGMA_REQUEST_RETRIES ||= '1';
-      process.env.MAX_FIGMA_NODES ||= '160';
+      process.env.MAX_FIGMA_NODES ||= '90';
+      process.env.MAX_DOM_NODES ||= '220';
     }
     const { runDesignQA } = await import('../../src/lib/designQaRunner.js');
     const report = await Promise.race([runDesignQA(req.body || {}), timeout]);

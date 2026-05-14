@@ -39,7 +39,7 @@ export async function runDesignQA(body: any) {
 
   try {
     console.log(`[QA] Capturing target page: ${pageUrl}`);
-    const { nodes: domNodes, screenshot: domScreenshot } = await domService.start(pageUrl, viewport);
+    const { nodes: domNodes, screenshot: domScreenshot } = await domService.start(pageUrl, viewport, { includeScreenshot: !IS_SERVERLESS });
     console.log(`[QA] DOM roots captured: ${domNodes.length}`);
     const designMatch = await analyzeDesignIdentity(figmaNodes, domNodes, pageUrl, fileId, figmaService, domService);
     console.log(`[QA] Design identity check: ${designMatch.status} (${designMatch.score}%)`);

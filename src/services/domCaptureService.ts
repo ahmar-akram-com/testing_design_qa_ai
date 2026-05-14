@@ -5,7 +5,7 @@ export class DOMCaptureService {
   private browser?: Browser;
   private page?: Page;
 
-  async start(url: string, viewportName = 'desktop'): Promise<{ nodes: UINode[]; screenshot: string }> {
+  async start(url: string, viewportName = 'desktop', options: { includeScreenshot?: boolean } = {}): Promise<{ nodes: UINode[]; screenshot: string }> {
     process.env.PLAYWRIGHT_BROWSERS_PATH ||= '0';
     const { chromium: playwrightChromium } = await import('playwright');
     const launchOptions = await this.getLaunchOptions();
@@ -37,17 +37,21 @@ export class DOMCaptureService {
 
     const fullHeight = await this.page.evaluate<number>('document.documentElement.scrollHeight');
     const fullWidth = await this.page.evaluate<number>('document.documentElement.scrollWidth');
-    const limitHeight = Math.max(viewport.height, Math.min(fullHeight, isServerless ? 3200 : 5000));
+    const limitHeight = Math.max(viewport.height, Math.min(fullHeight, isServerless ? 2200 : 5000));
     const limitWidth = Math.max(viewport.width, fullWidth);
 
     await this.page.setViewportSize({ width: limitWidth, height: limitHeight });
 
-    const screenshotBuffer = await this.page.screenshot({
+    const screenshot = options.includeScreenshot === false ? '' : (await this.page.screenshot({
       clip: { x: 0, y: 0, width: limitWidth, height: limitHeight },
-    });
+    })).toString('base64');
 
+    const maxDomNodes = Number(process.env.MAX_DOM_NODES || (isServerless ? 220 : 1200));
     const nodes = await this.page.evaluate<UINode | null>(`(() => {
+      const maxNodes = ${Math.max(25, Math.floor(maxDomNodes))};
+      let visitedNodes = 0;
       const traverse = (el) => {
+        if (visitedNodes >= maxNodes) return null;
         const rect = el.getBoundingClientRect();
         if (rect.width === 0 && rect.height === 0 && el.children.length === 0) return null;
 
@@ -55,6 +59,7 @@ export class DOMCaptureService {
         if (computed.display === 'none' || computed.visibility === 'hidden' || parseFloat(computed.opacity) < 0.1) {
           return null;
         }
+        visitedNodes += 1;
 
         const children = [];
         const source = el.shadowRoot || el;
@@ -110,7 +115,7 @@ export class DOMCaptureService {
 
     return {
       nodes: nodes ? [nodes] : [],
-      screenshot: screenshotBuffer.toString('base64'),
+      screenshot,
     };
   }
 
