@@ -2,6 +2,7 @@ const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 55000 : 180000;
 const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || DEFAULT_QA_TIMEOUT_MS);
 
 export default async function handler(req: any, res: any) {
+  setNoStoreHeaders(res);
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'Method not allowed' });
@@ -33,6 +34,7 @@ export default async function handler(req: any, res: any) {
       process.env.FIGMA_REQUEST_RETRIES ||= '1';
       process.env.FIGMA_RETRY_DELAY_CAP_MS ||= '4000';
       process.env.FIGMA_CACHE_TTL_MS ||= '900000';
+      process.env.FIGMA_STALE_CACHE_TTL_MS ||= '86400000';
       process.env.MAX_FIGMA_NODES ||= '50';
       process.env.MAX_DOM_NODES ||= '160';
       process.env.TARGET_HTML_TIMEOUT_MS ||= '6000';
@@ -50,6 +52,13 @@ export default async function handler(req: any, res: any) {
       error: error.message || 'QA run failed',
     });
   }
+}
+
+function setNoStoreHeaders(res: any) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
 }
 
 function isUpstreamRateLimitError(error: any) {

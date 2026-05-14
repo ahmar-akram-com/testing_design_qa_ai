@@ -8,9 +8,11 @@ const FIGMA_REQUEST_TIMEOUT_MS = Number(process.env.FIGMA_REQUEST_TIMEOUT_MS || 
 const FIGMA_REQUEST_RETRIES = Number(process.env.FIGMA_REQUEST_RETRIES || 5);
 const FIGMA_RETRY_DELAY_CAP_MS = Number(process.env.FIGMA_RETRY_DELAY_CAP_MS || 5000);
 const FIGMA_CACHE_TTL_MS = Number(process.env.FIGMA_CACHE_TTL_MS || 10 * 60 * 1000);
+const FIGMA_STALE_CACHE_TTL_MS = Number(process.env.FIGMA_STALE_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 
 type CacheEntry<T> = {
   expiresAt: number;
+  staleUntil: number;
   data: T;
 };
 
@@ -230,13 +232,24 @@ export class FigmaService {
   }
 
   private getCached<T>(key: string): T | null {
+    return this.readCache<T>(key, false);
+  }
+
+  private getStaleCached<T>(key: string): T | null {
+    return this.readCache<T>(key, true);
+  }
+
+  private readCache<T>(key: string, allowStale: boolean): T | null {
     const cached = sharedFigmaCache.get(key);
     if (!cached) return null;
-    if (cached.expiresAt <= Date.now()) {
-      sharedFigmaCache.delete(key);
-      return null;
+    const now = Date.now();
+    if (cached.expiresAt > now || (allowStale && cached.staleUntil > now)) {
+      return cached.data as T;
     }
-    return cached.data as T;
+    if (cached.staleUntil <= now) {
+      sharedFigmaCache.delete(key);
+    }
+    return null;
   }
 
   private async cachedRequest<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -248,8 +261,19 @@ export class FigmaService {
 
     const request = fn()
       .then((data) => {
-        sharedFigmaCache.set(key, { data, expiresAt: Date.now() + FIGMA_CACHE_TTL_MS });
+        sharedFigmaCache.set(key, {
+          data,
+          expiresAt: Date.now() + FIGMA_CACHE_TTL_MS,
+          staleUntil: Date.now() + FIGMA_STALE_CACHE_TTL_MS,
+        });
         return data;
+      })
+      .catch((error) => {
+        if (this.isRateLimitError(error)) {
+          const stale = this.getStaleCached<T>(key);
+          if (stale) return stale;
+        }
+        throw error;
       })
       .finally(() => sharedFigmaInflight.delete(key));
 
@@ -262,5 +286,17 @@ export class FigmaService {
     error.statusCode = statusCode;
     error.code = code;
     return error;
+  }
+
+  private isRateLimitError(error: any) {
+    const message = String(error?.message || '');
+    return (
+      error?.statusCode === 429 ||
+      error?.response?.status === 429 ||
+      error?.code === 'FIGMA_RATE_LIMIT' ||
+      message.includes('status code 429') ||
+      message.includes('HTTP 429') ||
+      message.toLowerCase().includes('rate limit')
+    );
   }
 }

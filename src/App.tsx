@@ -75,7 +75,14 @@ export default function App() {
   const isFigmaUrlValid = figmaUrl === '' || /^https:\/\/(www\.)?figma\.com\//.test(figmaUrl);
   const isPageUrlValid = pageUrl === '' || /^https?:\/\//.test(pageUrl);
   const isRunDisabled = !figmaUrl.trim() || !pageUrl.trim() || !isFigmaUrlValid || !isPageUrlValid;
-  const loadSession = () => window.location.reload();
+  const loadSession = () => {
+    localStorage.removeItem('designqa.runRecords');
+    localStorage.removeItem('designqa.figmaToken');
+    sessionStorage.clear();
+    const url = new URL(window.location.href);
+    url.searchParams.set('refresh', Date.now().toString());
+    window.location.replace(url.toString());
+  };
 
   useEffect(() => {
     localStorage.removeItem('designqa.figmaToken');
@@ -98,7 +105,8 @@ export default function App() {
 
       const response = await fetch('/api/qa/run', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
         body: JSON.stringify({ figmaUrl, pageUrl, viewport, tolerance, preset, figmaPageName, figmaNodeId, figmaToken }),
       });
 
