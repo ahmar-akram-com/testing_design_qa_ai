@@ -157,12 +157,12 @@ async function runFastServerlessQA({
   console.log(`[QA] Running fast deployed analysis for ${pageUrl}`);
   const html = await fetchTargetHtml(pageUrl);
   const targetSnapshot = buildTargetSnapshotFromHtml(html, pageUrl);
-  let designMatch = await compareLogoImagesFromHtml(figmaNodes, targetSnapshot.logoImages, fileId, figmaService, pageUrl);
-  if (designMatch.status === 'unknown') {
-    designMatch = analyzeSignalIdentity(figmaNodes, targetSnapshot.nodes, pageUrl);
-  }
+  const initialDesignMatch = analyzeSignalIdentity(figmaNodes, targetSnapshot.nodes, pageUrl);
+  const matches = mappingEngine.matchNodes(figmaNodes, targetSnapshot.nodes);
+  const results = comparisonEngine.compare(matches);
+  const designMatch = resolveServerlessDesignMatch(initialDesignMatch, results);
 
-  if (designMatch.status !== 'matched') {
+  if (designMatch.status === 'mismatch') {
     return {
       id: Math.random().toString(36).slice(2, 11),
       timestamp: new Date().toISOString(),
@@ -182,8 +182,6 @@ async function runFastServerlessQA({
     };
   }
 
-  const matches = mappingEngine.matchNodes(figmaNodes, targetSnapshot.nodes);
-  const results = comparisonEngine.compare(matches);
   const matchedComponents = results.filter((result) => result.domNode).length;
   const overallScore = calculateOverallScore(results, designMatch.status);
 
@@ -203,6 +201,49 @@ async function runFastServerlessQA({
       passCount: results.filter((result) => result.score >= 90).length,
       failCount: results.filter((result) => result.score < 90).length,
     },
+  };
+}
+
+function resolveServerlessDesignMatch(
+  designMatch: ReturnType<typeof analyzeSignalIdentity>,
+  results: ReturnType<ComparisonEngine['compare']>,
+) {
+  if (designMatch.status === 'matched') return designMatch;
+
+  const matchedComponents = results.filter((result) => result.domNode).length;
+  const strongMatches = results.filter((result) => result.domNode && result.confidence >= 0.85).length;
+  const totalComponents = Math.max(1, results.length);
+  const matchedRatio = matchedComponents / totalComponents;
+  const strongMatchRatio = strongMatches / totalComponents;
+  const hasComponentEvidence = matchedRatio >= 0.15 || strongMatchRatio >= 0.08;
+
+  if (hasComponentEvidence) {
+    const score = Math.max(
+      designMatch.score,
+      Math.min(100, Math.round(Math.max(matchedRatio, strongMatchRatio) * 100)),
+    );
+
+    return {
+      ...designMatch,
+      status: 'matched' as const,
+      score,
+      message: 'Both Figma design file and target URL matched. Test comparison begins.',
+      checkName: 'Component/content match check',
+      reason: `The deployed comparison found ${matchedComponents} shared component/content candidate${matchedComponents === 1 ? '' : 's'}, so the target URL is treated as the same design.`,
+      matchedSignals: designMatch.matchedSignals.length
+        ? designMatch.matchedSignals
+        : [`${matchedComponents} component/content candidate${matchedComponents === 1 ? '' : 's'} matched`],
+    };
+  }
+
+  return {
+    ...designMatch,
+    status: 'mismatch' as const,
+    score: 0,
+    message: 'Figma design file and target URL are not the same. Comparison was stopped.',
+    checkName: 'Component/content match check',
+    reason: 'No distinctive shared identity signal or component/content structure was found between the selected Figma design and target URL.',
+    matchedSignals: [],
   };
 }
 

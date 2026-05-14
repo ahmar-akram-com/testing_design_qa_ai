@@ -1,4 +1,4 @@
-const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 25000 : 180000;
+const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 55000 : 180000;
 const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || DEFAULT_QA_TIMEOUT_MS);
 
 export default async function handler(req: any, res: any) {
@@ -30,8 +30,9 @@ export default async function handler(req: any, res: any) {
       process.env.MAX_LOGO_CANDIDATES ||= '1';
       process.env.FIGMA_REQUEST_TIMEOUT_MS ||= '12000';
       process.env.FIGMA_REQUEST_RETRIES ||= '1';
-      process.env.MAX_FIGMA_NODES ||= '90';
+      process.env.MAX_FIGMA_NODES ||= '70';
       process.env.MAX_DOM_NODES ||= '220';
+      process.env.TARGET_HTML_TIMEOUT_MS ||= '6000';
     }
     const { runDesignQA } = await import('../../src/lib/designQaRunner.js');
     const report = await Promise.race([runDesignQA(req.body || {}), timeout]);
