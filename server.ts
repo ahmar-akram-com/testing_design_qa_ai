@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { execFile } from 'child_process';
+import { runDesignQA } from './src/lib/designQaRunner.js';
 import { ComparisonEngine } from './src/services/comparisonEngine.js';
 import { DOMCaptureService } from './src/services/domCaptureService.js';
 import { FigmaService } from './src/services/figmaService.js';
@@ -156,7 +157,7 @@ async function getGitHubToken(explicitToken = '') {
   });
 }
 
-export async function runDesignQA(body: any) {
+async function legacyRunDesignQA(body: any) {
   const { figmaUrl, pageUrl, viewport, preset, figmaPageName, figmaNodeId, figmaToken } = body;
   if (!figmaUrl || !pageUrl) throw httpError(400, 'Figma URL and Page URL are required');
   const activeFigmaToken = String(figmaToken || '').trim() || process.env.FIGMA_ACCESS_TOKEN;

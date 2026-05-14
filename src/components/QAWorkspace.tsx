@@ -144,22 +144,7 @@ export function QAWorkspace({
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 px-6 pb-24">
-      {report.designMatch && (
-        <div className={cn('rounded-xl border p-5', report.designMatch.status === 'matched' ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200' : report.designMatch.status === 'mismatch' ? 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200')}>
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-base font-semibold">
-                {report.designMatch.status === 'matched' ? <CheckCircle2 className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
-                {report.designMatch.message}
-              </div>
-              <p className="mt-1 text-sm opacity-80">
-                Identity match score: {report.designMatch.score}% | Matched signals: {report.designMatch.matchedSignals.length ? report.designMatch.matchedSignals.join(', ') : 'None'}
-              </p>
-            </div>
-            <span className="rounded-full border border-current/20 px-3 py-1 text-xs font-semibold uppercase">{report.designMatch.status}</span>
-          </div>
-        </div>
-      )}
+      {report.designMatch && <DesignIdentityBanner designMatch={report.designMatch} />}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Summary label="Overall Match Score" value={`${report.overallScore}%`} tone={report.overallScore >= 90 ? 'good' : report.overallScore >= 70 ? 'warn' : 'bad'} />
@@ -168,20 +153,31 @@ export function QAWorkspace({
         <Summary label="Critical Failures" value={report.summary.failCount} tone="bad" />
       </div>
 
-      <IssueBacklog
-        report={report}
-        issues={reportIssues}
-        selectedMatch={selectedMatch}
-        setSelectedMatch={setSelectedMatch}
-        viewport={viewport}
-        githubRepo={githubRepo}
-        setGithubRepo={setGithubRepo}
-        issueTemplate={issueTemplate}
-        setIssueTemplate={setIssueTemplate}
-        copyStatus={copyStatus}
-        setCopyStatus={setCopyStatus}
-      />
+      {report.designMatch?.status === 'matched' && (
+        <IssueBacklog
+          report={report}
+          issues={reportIssues}
+          selectedMatch={selectedMatch}
+          setSelectedMatch={setSelectedMatch}
+          viewport={viewport}
+          githubRepo={githubRepo}
+          setGithubRepo={setGithubRepo}
+          issueTemplate={issueTemplate}
+          setIssueTemplate={setIssueTemplate}
+          copyStatus={copyStatus}
+          setCopyStatus={setCopyStatus}
+        />
+      )}
 
+      {report.designMatch?.status !== 'matched' ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-8 text-center text-rose-800 shadow-sm dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+          <AlertCircle className="mx-auto mb-3 h-10 w-10" />
+          <h3 className="text-lg font-semibold">Comparison did not start</h3>
+          <p className="mx-auto mt-2 max-w-2xl text-sm opacity-85">
+            The system could not confirm that this target URL belongs to the selected Figma design. Use the correct staging URL or select the exact Figma frame/component and run the test again.
+          </p>
+        </div>
+      ) : (
       <div className="grid min-h-[620px] grid-cols-1 gap-6 lg:grid-cols-12">
         <aside className="rounded-xl border border-slate-200 bg-white/60 p-3 dark:border-slate-800 dark:bg-slate-900/50 lg:col-span-3">
           <h3 className="px-2 pb-3 text-sm font-medium text-slate-800 dark:text-slate-200">Component Scans</h3>
@@ -248,6 +244,52 @@ export function QAWorkspace({
             </div>
           )}
         </section>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function DesignIdentityBanner({ designMatch }: { designMatch: NonNullable<QAReport['designMatch']> }) {
+  const isMatched = designMatch.status === 'matched';
+  const isMismatch = designMatch.status === 'mismatch';
+  const toneClass = isMatched
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-800 shadow-emerald-900/5 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200'
+    : isMismatch
+      ? 'border-rose-200 bg-rose-50 text-rose-800 shadow-rose-900/5 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200'
+      : 'border-amber-200 bg-amber-50 text-amber-800 shadow-amber-900/5 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200';
+
+  return (
+    <div className={cn('rounded-xl border p-5 shadow-sm', toneClass)}>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-base font-semibold">
+            {isMatched ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
+            <span>{designMatch.message}</span>
+          </div>
+          <p className="mt-1 text-sm opacity-85">{designMatch.reason}</p>
+          <div className="mt-4 grid gap-3 text-xs md:grid-cols-4">
+            <IdentitySignalPanel label="Check" values={[designMatch.checkName || 'Unique design identity check']} />
+            <IdentitySignalPanel label="Matched signals" values={designMatch.matchedSignals} empty="No shared identity signal" />
+            <IdentitySignalPanel label="Figma signals checked" values={designMatch.figmaSignals} empty="No unique Figma signal found" />
+            <IdentitySignalPanel label="Target signals checked" values={designMatch.targetSignals} empty="No unique target signal found" />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full border border-current/20 px-3 py-1 text-xs font-semibold uppercase">{designMatch.status}</span>
+          <span className="rounded-full border border-current/20 px-3 py-1 text-xs font-semibold">{designMatch.score}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IdentitySignalPanel({ label, values, empty = 'None' }: { label: string; values: string[]; empty?: string }) {
+  return (
+    <div className="rounded-lg border border-current/15 bg-white/35 p-3 dark:bg-slate-950/20">
+      <div className="mb-2 font-semibold uppercase tracking-wide opacity-70">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {values.length ? values.slice(0, 5).map((value) => <span key={value} className="rounded-full bg-white/60 px-2 py-1 dark:bg-slate-950/40">{value}</span>) : <span className="opacity-70">{empty}</span>}
       </div>
     </div>
   );

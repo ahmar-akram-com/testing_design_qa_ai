@@ -40,18 +40,8 @@ export async function runDesignQA(body: any) {
     const designMatch = analyzeDesignIdentity(figmaNodes, domNodes, pageUrl);
     console.log(`[QA] Design identity check: ${designMatch.status} (${designMatch.score}%)`);
 
-    if (designMatch.status === 'mismatch') {
+    if (designMatch.status !== 'matched') {
       console.log('[QA] Target URL identity does not match Figma design. Skipping component comparison.');
-      const mismatchResults = comparisonEngine.compare(
-        flattenNodes(figmaNodes).map((figmaNode) => ({
-          figmaNode,
-          domNode: null,
-          confidence: 0,
-          issues: [],
-          score: 0,
-        })),
-      );
-
       return {
         id: Math.random().toString(36).slice(2, 11),
         timestamp: new Date().toISOString(),
@@ -59,14 +49,14 @@ export async function runDesignQA(body: any) {
         pageUrl,
         overallScore: 0,
         designMatch,
-        matches: mismatchResults,
+        matches: [],
         screenshot: domScreenshot,
         summary: {
-          totalComponents: figmaNodes.length,
+          totalComponents: flattenNodes(figmaNodes).length,
           matchedComponents: 0,
-          totalIssues: mismatchResults.reduce((acc, result) => acc + result.issues.length, 0),
+          totalIssues: 0,
           passCount: 0,
-          failCount: mismatchResults.length,
+          failCount: 0,
         },
       };
     }
@@ -157,29 +147,37 @@ function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>,
 function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl: string) {
   const figmaSignals = collectIdentitySignals(figmaNodes, 'figma');
   const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(domNodes, 'target')].filter(uniqueOnly);
-  const importantFigmaSignals = figmaSignals.filter((signal) => !isGenericSignal(signal));
+  const importantFigmaSignals = selectDistinctiveSignals(figmaSignals);
+  const importantTargetSignals = selectDistinctiveSignals(targetSignals);
   const matchedSignals = importantFigmaSignals
     .filter((figmaSignal) => targetSignals.some((targetSignal) => signalsMatch(figmaSignal, targetSignal)))
     .filter(uniqueOnly)
     .slice(0, 8);
 
-  const score = importantFigmaSignals.length === 0 ? 0 : Math.round((matchedSignals.length / Math.min(importantFigmaSignals.length, 8)) * 100);
+  const denominator = Math.max(1, Math.min(importantFigmaSignals.length, 8));
+  const score = Math.round((matchedSignals.length / denominator) * 100);
   const hasFigmaIdentity = importantFigmaSignals.length > 0;
-  const hasTargetIdentity = targetSignals.length > 0;
-  const status: 'matched' | 'mismatch' | 'unknown' = matchedSignals.length > 0 ? 'matched' : hasFigmaIdentity && hasTargetIdentity ? 'mismatch' : 'unknown';
+  const hasTargetIdentity = importantTargetSignals.length > 0;
+  const status: 'matched' | 'mismatch' | 'unknown' =
+    matchedSignals.length > 0 && score >= 12 ? 'matched' : hasFigmaIdentity && hasTargetIdentity ? 'mismatch' : 'unknown';
   const message =
     status === 'matched'
-      ? 'Figma design matches with the target URL. Test comparison begins.'
+      ? 'Both Figma design file and target URL matched. Test comparison begins.'
       : status === 'mismatch'
-        ? 'Figma and target URL are not same.'
-        : 'Design identity could not be confirmed from logo or brand text. Test comparison continues.';
+        ? 'Figma design file and target URL are not the same. Comparison was stopped.'
+        : 'Design identity could not be confirmed from unique logo, brand, header, or hero text. Comparison was stopped.';
 
   return {
     status,
     score,
     message,
+    checkName: 'Unique design identity check',
+    reason:
+      status === 'matched'
+        ? 'At least one distinctive Figma identity signal was found on the target URL.'
+        : 'No distinctive shared identity signal was found between the Figma frame/component and the target URL.',
     figmaSignals: importantFigmaSignals.slice(0, 8),
-    targetSignals: targetSignals.slice(0, 8),
+    targetSignals: importantTargetSignals.slice(0, 8),
     matchedSignals,
   };
 }
@@ -201,6 +199,15 @@ function collectIdentitySignals(nodes: UINode[], source: 'figma' | 'target') {
   }
 
   return signals.filter((signal) => signal.length >= 3 && !isGenericSignal(signal)).filter(uniqueOnly).slice(0, 30);
+}
+
+function selectDistinctiveSignals(signals: string[]) {
+  return signals
+    .map(normalizeSignal)
+    .filter((signal) => signal.length >= 3 && !isGenericSignal(signal))
+    .sort((a, b) => signalSpecificity(b) - signalSpecificity(a))
+    .filter(uniqueOnly)
+    .slice(0, 16);
 }
 
 function collectDomainSignals(pageUrl: string) {
@@ -228,7 +235,15 @@ function signalsMatch(figmaSignal: string, targetSignal: string) {
   const targetWords = new Set(targetSignal.split(' ').filter((word) => word.length >= 3));
   if (figmaWords.size === 0 || targetWords.size === 0) return false;
   const overlap = [...figmaWords].filter((word) => targetWords.has(word)).length;
-  return overlap / Math.min(figmaWords.size, targetWords.size) >= 0.75;
+  return overlap / Math.min(figmaWords.size, targetWords.size) >= 0.65;
+}
+
+function signalSpecificity(signal: string) {
+  const words = signal.split(' ').filter(Boolean);
+  const lengthScore = Math.min(signal.length, 40);
+  const wordScore = Math.min(words.length, 6) * 8;
+  const hasNumberScore = /\d/.test(signal) ? 4 : 0;
+  return lengthScore + wordScore + hasNumberScore;
 }
 
 function normalizeSignal(value: string) {

@@ -62,6 +62,8 @@ export interface QAReport {
     figmaSignals: string[];
     targetSignals: string[];
     matchedSignals: string[];
+    checkName?: string;
+    reason?: string;
   };
   matches: ComponentMatch[];
   screenshot?: string;
