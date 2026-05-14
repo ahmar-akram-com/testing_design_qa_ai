@@ -2,9 +2,12 @@ import { ComparisonEngine } from '../services/comparisonEngine.js';
 import { DOMCaptureService } from '../services/domCaptureService.js';
 import { FigmaService } from '../services/figmaService.js';
 import { MappingEngine } from '../services/mappingEngine.js';
+import { PNG } from 'pngjs';
 import type { UINode } from '../types';
 
 const MAX_VISUAL_MATCHES = Number(process.env.MAX_VISUAL_MATCHES || 10);
+const LOGO_IMAGE_MATCH_THRESHOLD = Number(process.env.LOGO_IMAGE_MATCH_THRESHOLD || 72);
+const MAX_LOGO_CANDIDATES = Number(process.env.MAX_LOGO_CANDIDATES || 4);
 
 export async function runDesignQA(body: any) {
   const { figmaUrl, pageUrl, viewport, preset, figmaPageName, figmaNodeId, figmaToken } = body;
@@ -37,7 +40,7 @@ export async function runDesignQA(body: any) {
     console.log(`[QA] Capturing target page: ${pageUrl}`);
     const { nodes: domNodes, screenshot: domScreenshot } = await domService.start(pageUrl, viewport);
     console.log(`[QA] DOM roots captured: ${domNodes.length}`);
-    const designMatch = analyzeDesignIdentity(figmaNodes, domNodes, pageUrl);
+    const designMatch = await analyzeDesignIdentity(figmaNodes, domNodes, pageUrl, fileId, figmaService, domService);
     console.log(`[QA] Design identity check: ${designMatch.status} (${designMatch.score}%)`);
 
     if (designMatch.status !== 'matched') {
@@ -144,7 +147,10 @@ function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>,
   return Math.round(results.reduce((acc, result) => acc + result.score, 0) / results.length);
 }
 
-function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl: string) {
+async function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl: string, fileId: string, figmaService: FigmaService, domService: DOMCaptureService) {
+  const logoImageCheck = await compareLogoImages(figmaNodes, domNodes, fileId, figmaService, domService);
+  if (logoImageCheck) return logoImageCheck;
+
   const figmaSignals = collectIdentitySignals(figmaNodes, 'figma');
   const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(domNodes, 'target')].filter(uniqueOnly);
   const importantFigmaSignals = selectDistinctiveSignals(figmaSignals);
@@ -171,7 +177,7 @@ function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl
     status,
     score,
     message,
-    checkName: 'Unique design identity check',
+    checkName: 'Fallback unique identity check',
     reason:
       status === 'matched'
         ? 'At least one distinctive Figma identity signal was found on the target URL.'
@@ -180,6 +186,189 @@ function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl
     targetSignals: importantTargetSignals.slice(0, 8),
     matchedSignals,
   };
+}
+
+async function compareLogoImages(figmaNodes: UINode[], domNodes: UINode[], fileId: string, figmaService: FigmaService, domService: DOMCaptureService) {
+  const figmaLogoCandidates = collectLogoImageCandidates(figmaNodes, 'figma').slice(0, MAX_LOGO_CANDIDATES);
+  const targetLogoCandidates = collectLogoImageCandidates(domNodes, 'target').slice(0, MAX_LOGO_CANDIDATES);
+  const figmaLabels = figmaLogoCandidates.map(candidateLabel).filter(uniqueOnly);
+  const targetLabels = targetLogoCandidates.map(candidateLabel).filter(uniqueOnly);
+
+  if (figmaLogoCandidates.length === 0 || targetLogoCandidates.length === 0) {
+    return {
+      status: 'unknown' as const,
+      score: 0,
+      message: 'Logo image match could not be confirmed. Comparison was stopped.',
+      checkName: 'Logo image match check',
+      reason: figmaLogoCandidates.length === 0
+        ? 'No logo image candidate was found in the selected Figma frame/component.'
+        : 'No logo image candidate was found on the target URL.',
+      figmaSignals: figmaLabels,
+      targetSignals: targetLabels,
+      matchedSignals: [],
+    };
+  }
+
+  const figmaImageUrls = await figmaService.getNodesImages(fileId, figmaLogoCandidates.map((candidate) => candidate.id));
+  const figmaImages = await Promise.all(
+    figmaLogoCandidates.map(async (candidate) => {
+      const imageUrl = figmaImageUrls[candidate.id];
+      if (!imageUrl) return null;
+      try {
+        const buffer = await figmaService.getImageBuffer(imageUrl);
+        return { candidate, base64: buffer.toString('base64') };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const targetImages = await Promise.all(
+    targetLogoCandidates.map(async (candidate) => {
+      const base64 = await domService.captureNodeImage(candidate.layout);
+      return base64 ? { candidate, base64 } : null;
+    }),
+  );
+
+  let best: { score: number; figma: UINode; target: UINode } | null = null;
+  for (const figmaImage of figmaImages.filter(Boolean) as Array<{ candidate: UINode; base64: string }>) {
+    for (const targetImage of targetImages.filter(Boolean) as Array<{ candidate: UINode; base64: string }>) {
+      const score = compareImageFingerprints(figmaImage.base64, targetImage.base64);
+      if (!best || score > best.score) best = { score, figma: figmaImage.candidate, target: targetImage.candidate };
+    }
+  }
+
+  if (!best) {
+    return {
+      status: 'unknown' as const,
+      score: 0,
+      message: 'Logo image match could not be confirmed. Comparison was stopped.',
+      checkName: 'Logo image match check',
+      reason: 'Logo candidates were found, but one or more logo images could not be rendered for comparison.',
+      figmaSignals: figmaLabels,
+      targetSignals: targetLabels,
+      matchedSignals: [],
+    };
+  }
+
+  const score = Math.round(best.score);
+  const matched = score >= LOGO_IMAGE_MATCH_THRESHOLD;
+  return {
+    status: matched ? 'matched' as const : 'mismatch' as const,
+    score,
+    message: matched
+      ? 'Logo image matched in Figma and target URL. Test comparison begins.'
+      : 'Target URL and Figma design are not matched because the logo image is different. Comparison was stopped.',
+    checkName: 'Logo image match check',
+    reason: matched
+      ? `The best logo image match scored ${score}%, so the target URL is treated as the same design.`
+      : `The best logo image match scored ${score}%, below the required ${LOGO_IMAGE_MATCH_THRESHOLD}%.`,
+    figmaSignals: figmaLabels,
+    targetSignals: targetLabels,
+    matchedSignals: matched ? [`${candidateLabel(best.figma)} -> ${candidateLabel(best.target)}`] : [],
+  };
+}
+
+function collectLogoImageCandidates(nodes: UINode[], source: 'figma' | 'target') {
+  return flattenNodes(nodes)
+    .filter((node) => {
+      const label = normalizeSignal(`${node.name} ${node.text || ''}`);
+      const width = node.layout?.width || 0;
+      const height = node.layout?.height || 0;
+      const y = node.layout?.y || 0;
+      const hasLogoLabel = /\blogo\b|brandmark|logomark|site logo|company logo/.test(label);
+      const isImageLike = source === 'target'
+        ? node.type === 'IMAGE'
+        : ['VECTOR', 'RECTANGLE', 'GROUP', 'COMPONENT', 'INSTANCE', 'FRAME'].includes(node.type);
+      const isHeaderSized = y <= 420 && width >= 16 && height >= 16 && width <= 900 && height <= 320;
+      const isLikelyHeaderImage = source === 'target' && node.type === 'IMAGE' && y <= 260 && width >= 24 && height >= 16 && width <= 600 && height <= 220;
+      return isImageLike && (hasLogoLabel || isLikelyHeaderImage) && isHeaderSized;
+    })
+    .sort((a, b) => logoCandidateScore(b, source) - logoCandidateScore(a, source))
+    .filter((candidate, index, candidates) => candidates.findIndex((item) => item.id === candidate.id) === index);
+}
+
+function logoCandidateScore(node: UINode, source: 'figma' | 'target') {
+  const label = normalizeSignal(`${node.name} ${node.text || ''}`);
+  const y = node.layout?.y || 0;
+  const width = node.layout?.width || 0;
+  const height = node.layout?.height || 0;
+  const explicitLogo = /\blogo\b|brandmark|logomark|site logo|company logo/.test(label) ? 100 : 0;
+  const headerScore = Math.max(0, 60 - Math.round(y / 8));
+  const shapeScore = width > height ? 20 : 8;
+  const imageScore = source === 'target' && node.type === 'IMAGE' ? 30 : 0;
+  return explicitLogo + headerScore + shapeScore + imageScore;
+}
+
+function candidateLabel(node: UINode) {
+  return normalizeSignal(`${node.name} ${node.text || ''}`) || node.id;
+}
+
+function compareImageFingerprints(figmaBase64: string, targetBase64: string) {
+  const figma = imageFingerprint(figmaBase64);
+  const target = imageFingerprint(targetBase64);
+  if (!figma || !target) return 0;
+
+  const hashScore = bitSimilarity(figma.hash, target.hash) * 100;
+  const colorScore = paletteSimilarity(figma.palette, target.palette) * 100;
+  const aspectScore = Math.max(0, 100 - Math.abs(figma.aspect - target.aspect) * 45);
+
+  return Math.round(hashScore * 0.55 + colorScore * 0.25 + aspectScore * 0.2);
+}
+
+function imageFingerprint(base64: string) {
+  try {
+    const png = PNG.sync.read(Buffer.from(base64, 'base64'));
+    const size = 16;
+    const grayValues: number[] = [];
+    const palette = new Map<string, number>();
+
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const sourceX = Math.min(png.width - 1, Math.floor((x / size) * png.width));
+        const sourceY = Math.min(png.height - 1, Math.floor((y / size) * png.height));
+        const index = (png.width * sourceY + sourceX) << 2;
+        const alpha = png.data[index + 3] / 255;
+        const r = Math.round(png.data[index] * alpha + 255 * (1 - alpha));
+        const g = Math.round(png.data[index + 1] * alpha + 255 * (1 - alpha));
+        const b = Math.round(png.data[index + 2] * alpha + 255 * (1 - alpha));
+        grayValues.push(0.299 * r + 0.587 * g + 0.114 * b);
+
+        const key = `${Math.round(r / 48)}-${Math.round(g / 48)}-${Math.round(b / 48)}`;
+        palette.set(key, (palette.get(key) || 0) + 1);
+      }
+    }
+
+    const average = grayValues.reduce((sum, value) => sum + value, 0) / grayValues.length;
+    return {
+      hash: grayValues.map((value) => value >= average),
+      palette,
+      aspect: png.width / Math.max(1, png.height),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function bitSimilarity(left: boolean[], right: boolean[]) {
+  const total = Math.min(left.length, right.length);
+  if (total === 0) return 0;
+  let same = 0;
+  for (let index = 0; index < total; index += 1) {
+    if (left[index] === right[index]) same += 1;
+  }
+  return same / total;
+}
+
+function paletteSimilarity(left: Map<string, number>, right: Map<string, number>) {
+  const leftTotal = [...left.values()].reduce((sum, value) => sum + value, 0) || 1;
+  const rightTotal = [...right.values()].reduce((sum, value) => sum + value, 0) || 1;
+  const keys = new Set([...left.keys(), ...right.keys()]);
+  let overlap = 0;
+  for (const key of keys) {
+    overlap += Math.min((left.get(key) || 0) / leftTotal, (right.get(key) || 0) / rightTotal);
+  }
+  return overlap;
 }
 
 function collectIdentitySignals(nodes: UINode[], source: 'figma' | 'target') {
