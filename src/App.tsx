@@ -1,4 +1,4 @@
-import { type ComponentType, useEffect, useState } from 'react';
+import { type ComponentType, useEffect, useRef, useState } from 'react';
 import { Activity, AlertCircle, Bell, CheckCircle2, Clock, Eye, FileSearch, FolderKanban, Gauge, Loader2, Monitor, ScanLine, UserCircle, Users, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { Hero } from './components/Hero';
@@ -70,6 +70,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>('home');
   const [runRecords, setRunRecords] = useState<RunRecord[]>(() => readJson<RunRecord[]>('designqa.runRecords', []));
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => readJson<TeamMember[]>('designqa.teamMembers', defaultTeam));
+  const runInFlightRef = useRef(false);
 
   const isFigmaUrlValid = figmaUrl === '' || /^https:\/\/(www\.)?figma\.com\//.test(figmaUrl);
   const isPageUrlValid = pageUrl === '' || /^https?:\/\//.test(pageUrl);
@@ -81,11 +82,14 @@ export default function App() {
   }, []);
 
   const runQA = async () => {
+    if (runInFlightRef.current || isLoading) return;
+
     if (isRunDisabled) {
       setShowConfig(true);
       window.setTimeout(() => document.getElementById('qa-config')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
       return;
     }
+    runInFlightRef.current = true;
     setIsLoading(true);
     setErrorStatus(null);
 
@@ -117,6 +121,7 @@ export default function App() {
     } catch (error: any) {
       setErrorStatus(error.message || 'Analysis failed');
     } finally {
+      runInFlightRef.current = false;
       setIsLoading(false);
     }
   };

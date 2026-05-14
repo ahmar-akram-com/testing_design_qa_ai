@@ -42,8 +42,8 @@ export default async function handler(req: any, res: any) {
     res.status(200).json(report);
   } catch (error: any) {
     console.error('QA Run failed:', error);
-    if (isFigmaRateLimitError(error)) {
-      res.status(200).json(createFigmaRateLimitReport(req.body || {}));
+    if (isUpstreamRateLimitError(error)) {
+      res.status(200).json(createRateLimitReport(req.body || {}, error));
       return;
     }
     res.status(error.message?.startsWith('TIMEOUT') ? 504 : error.statusCode || 500).json({
@@ -52,11 +52,22 @@ export default async function handler(req: any, res: any) {
   }
 }
 
-function isFigmaRateLimitError(error: any) {
-  return error?.statusCode === 429 || error?.code === 'FIGMA_RATE_LIMIT' || String(error?.message || '').includes('Figma API 429');
+function isUpstreamRateLimitError(error: any) {
+  const message = String(error?.message || '');
+  return (
+    error?.statusCode === 429 ||
+    error?.response?.status === 429 ||
+    error?.code === 'FIGMA_RATE_LIMIT' ||
+    message.includes('Figma API 429') ||
+    message.includes('status code 429') ||
+    message.includes('HTTP 429')
+  );
 }
 
-function createFigmaRateLimitReport(body: any) {
+function createRateLimitReport(body: any, error: any) {
+  const isFigma = error?.code === 'FIGMA_RATE_LIMIT' || String(error?.message || '').toLowerCase().includes('figma');
+  const source = isFigma ? 'Figma' : 'Upstream service';
+
   return {
     id: Math.random().toString(36).slice(2, 11),
     timestamp: new Date().toISOString(),
@@ -66,10 +77,10 @@ function createFigmaRateLimitReport(body: any) {
     designMatch: {
       status: 'unknown',
       score: 0,
-      message: 'Figma rate limit reached. Comparison was paused before design matching could start.',
-      checkName: 'Figma API rate limit',
-      reason: 'Figma temporarily blocked additional API reads for this token. The app now retries briefly and reuses cached Figma responses, but this run needs to be started again after the limit clears.',
-      figmaSignals: ['Figma API rate limit exceeded'],
+      message: `${source} rate limit reached. Comparison was paused before design matching could start.`,
+      checkName: `${source} rate limit`,
+      reason: `${source} temporarily blocked additional requests. The app now retries briefly, reuses cached Figma responses, and returns this controlled report instead of failing with a raw 429 error.`,
+      figmaSignals: isFigma ? ['Figma API rate limit exceeded'] : [],
       targetSignals: [],
       matchedSignals: [],
     },
