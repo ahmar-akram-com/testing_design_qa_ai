@@ -465,7 +465,6 @@ function AnalysisLoadingOverlay({ show }: { show: boolean }) {
   const steps = [
     { label: 'Reading Figma frames', icon: FileSearch },
     { label: 'Capturing target page', icon: Monitor },
-    { label: 'Checking logo image match', icon: Eye },
     { label: 'Matching components', icon: ScanLine },
     { label: 'Preparing QA report', icon: CheckCircle2 },
   ];
@@ -495,7 +494,7 @@ function AnalysisLoadingOverlay({ show }: { show: boolean }) {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Analyzing comparison</h3>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The target URL logo image is being checked against the Figma logo before comparison begins.</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The Figma design and target page are being matched. Results will be displayed shortly.</p>
           </div>
         </div>
 

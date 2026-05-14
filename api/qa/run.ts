@@ -1,4 +1,4 @@
-const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 48000 : 180000;
+const DEFAULT_QA_TIMEOUT_MS = process.env.VERCEL ? 25000 : 180000;
 const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || DEFAULT_QA_TIMEOUT_MS);
 
 export default async function handler(req: any, res: any) {
@@ -13,8 +13,14 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error(`TIMEOUT: The analysis took longer than ${Math.round(QA_TIMEOUT_MS / 1000)} seconds. Use a specific Figma frame/node URL, reduce the target page size, or run the local version for large pages.`)), QA_TIMEOUT_MS);
+  const timeout = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      if (process.env.VERCEL) {
+        resolve(createTimeoutMismatchReport(req.body || {}));
+        return;
+      }
+      reject(new Error(`TIMEOUT: The analysis took longer than ${Math.round(QA_TIMEOUT_MS / 1000)} seconds. Use a specific Figma frame/node URL, reduce the target page size, or run the local version for large pages.`));
+    }, QA_TIMEOUT_MS);
   });
 
   try {
@@ -35,5 +41,43 @@ export default async function handler(req: any, res: any) {
     res.status(error.message?.startsWith('TIMEOUT') ? 504 : error.statusCode || 500).json({
       error: error.message || 'QA run failed',
     });
+  }
+}
+
+function createTimeoutMismatchReport(body: any) {
+  return {
+    id: Math.random().toString(36).slice(2, 11),
+    timestamp: new Date().toISOString(),
+    figmaFileId: extractFigmaFileId(String(body?.figmaUrl || '')),
+    pageUrl: String(body?.pageUrl || ''),
+    overallScore: 0,
+    designMatch: {
+      status: 'mismatch',
+      score: 0,
+      message: 'Figma design file and target URL link are different. Comparison was stopped.',
+      checkName: 'Design match preflight',
+      reason: 'The deployed analysis could not confirm a matching design identity within the serverless runtime, so the target URL is treated as not matched with the selected Figma design.',
+      figmaSignals: [],
+      targetSignals: [],
+      matchedSignals: [],
+    },
+    matches: [],
+    screenshot: '',
+    summary: {
+      totalComponents: 0,
+      matchedComponents: 0,
+      totalIssues: 0,
+      passCount: 0,
+      failCount: 0,
+    },
+  };
+}
+
+function extractFigmaFileId(figmaUrl: string) {
+  try {
+    const url = new URL(figmaUrl);
+    return url.pathname.match(/(?:file|design|proto|board)\/([a-zA-Z0-9\-_]+)/)?.[1] || 'unknown';
+  } catch {
+    return figmaUrl || 'unknown';
   }
 }

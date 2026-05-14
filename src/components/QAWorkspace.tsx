@@ -174,7 +174,7 @@ export function QAWorkspace({
           <AlertCircle className="mx-auto mb-3 h-10 w-10" />
           <h3 className="text-lg font-semibold">Comparison did not start</h3>
           <p className="mx-auto mt-2 max-w-2xl text-sm opacity-85">
-            The system could not confirm that this target URL belongs to the selected Figma design. Use the correct staging URL or select the exact Figma frame/component and run the test again.
+            Figma design file and target URL link are different, so the test was stopped before component comparison. Use the correct target URL or select the exact Figma frame/component and run the test again.
           </p>
         </div>
       ) : (
