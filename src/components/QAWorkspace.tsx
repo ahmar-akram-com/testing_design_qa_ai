@@ -170,11 +170,13 @@ export function QAWorkspace({
       )}
 
       {report.designMatch?.status !== 'matched' ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-8 text-center text-rose-800 shadow-sm dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+        <div className={cn('rounded-xl border p-8 text-center shadow-sm', report.designMatch?.status === 'mismatch' ? 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100')}>
           <AlertCircle className="mx-auto mb-3 h-10 w-10" />
           <h3 className="text-lg font-semibold">Comparison did not start</h3>
           <p className="mx-auto mt-2 max-w-2xl text-sm opacity-85">
-            Figma design file and target URL link are different, so the test was stopped before component comparison. Use the correct target URL or select the exact Figma frame/component and run the test again.
+            {report.designMatch?.status === 'mismatch'
+              ? 'Figma design file and target URL link are different, so the test was stopped before component comparison. Use the correct target URL or select the exact Figma frame/component and run the test again.'
+              : 'The system could not complete a genuine design identity check, so it did not mark the target URL as matched or different. Select a specific Figma frame/component and run the test again.'}
           </p>
         </div>
       ) : (

@@ -16,7 +16,7 @@ export default async function handler(req: any, res: any) {
   const timeout = new Promise((resolve, reject) => {
     setTimeout(() => {
       if (process.env.VERCEL) {
-        resolve(createTimeoutMismatchReport(req.body || {}));
+        resolve(createTimeoutUnknownReport(req.body || {}));
         return;
       }
       reject(new Error(`TIMEOUT: The analysis took longer than ${Math.round(QA_TIMEOUT_MS / 1000)} seconds. Use a specific Figma frame/node URL, reduce the target page size, or run the local version for large pages.`));
@@ -44,7 +44,7 @@ export default async function handler(req: any, res: any) {
   }
 }
 
-function createTimeoutMismatchReport(body: any) {
+function createTimeoutUnknownReport(body: any) {
   return {
     id: Math.random().toString(36).slice(2, 11),
     timestamp: new Date().toISOString(),
@@ -52,11 +52,11 @@ function createTimeoutMismatchReport(body: any) {
     pageUrl: String(body?.pageUrl || ''),
     overallScore: 0,
     designMatch: {
-      status: 'mismatch',
+      status: 'unknown',
       score: 0,
-      message: 'Figma design file and target URL link are different. Comparison was stopped.',
+      message: 'Design match could not be verified in the deployed runtime. Comparison was stopped.',
       checkName: 'Design match preflight',
-      reason: 'The deployed analysis could not confirm a matching design identity within the serverless runtime, so the target URL is treated as not matched with the selected Figma design.',
+      reason: 'The deployed analysis timed out before it could complete a genuine design identity check, so it did not mark the target URL as matched or different.',
       figmaSignals: [],
       targetSignals: [],
       matchedSignals: [],

@@ -157,7 +157,10 @@ async function runFastServerlessQA({
   console.log(`[QA] Running fast deployed analysis for ${pageUrl}`);
   const html = await fetchTargetHtml(pageUrl);
   const targetSnapshot = buildTargetSnapshotFromHtml(html, pageUrl);
-  const designMatch = await compareLogoImagesFromHtml(figmaNodes, targetSnapshot.logoImages, fileId, figmaService, pageUrl);
+  let designMatch = await compareLogoImagesFromHtml(figmaNodes, targetSnapshot.logoImages, fileId, figmaService, pageUrl);
+  if (designMatch.status === 'unknown') {
+    designMatch = analyzeSignalIdentity(figmaNodes, targetSnapshot.nodes, pageUrl);
+  }
 
   if (designMatch.status !== 'matched') {
     return {
@@ -226,10 +229,14 @@ function calculateOverallScore(results: ReturnType<ComparisonEngine['compare']>,
 
 async function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], pageUrl: string, fileId: string, figmaService: FigmaService, domService: DOMCaptureService) {
   const logoImageCheck = await compareLogoImages(figmaNodes, domNodes, fileId, figmaService, domService);
-  if (logoImageCheck) return logoImageCheck;
+  if (logoImageCheck.status !== 'unknown') return logoImageCheck;
 
+  return analyzeSignalIdentity(figmaNodes, domNodes, pageUrl);
+}
+
+function analyzeSignalIdentity(figmaNodes: UINode[], targetNodes: UINode[], pageUrl: string) {
   const figmaSignals = collectIdentitySignals(figmaNodes, 'figma');
-  const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(domNodes, 'target')].filter(uniqueOnly);
+  const targetSignals = [...collectDomainSignals(pageUrl), ...collectIdentitySignals(targetNodes, 'target')].filter(uniqueOnly);
   const importantFigmaSignals = selectDistinctiveSignals(figmaSignals);
   const importantTargetSignals = selectDistinctiveSignals(targetSignals);
   const matchedSignals = importantFigmaSignals
@@ -254,7 +261,7 @@ async function analyzeDesignIdentity(figmaNodes: UINode[], domNodes: UINode[], p
     status,
     score,
     message,
-    checkName: 'Fallback unique identity check',
+    checkName: 'Design identity match check',
     reason:
       status === 'matched'
         ? 'At least one distinctive Figma identity signal was found on the target URL.'
@@ -275,8 +282,8 @@ async function compareLogoImages(figmaNodes: UINode[], domNodes: UINode[], fileI
     return {
       status: 'unknown' as const,
       score: 0,
-      message: 'Logo image match could not be confirmed. Comparison was stopped.',
-      checkName: 'Logo image match check',
+      message: 'Design identity could not be confirmed. Comparison was stopped.',
+      checkName: 'Design identity match check',
       reason: figmaLogoCandidates.length === 0
         ? 'No logo image candidate was found in the selected Figma frame/component.'
         : 'No logo image candidate was found on the target URL.',
@@ -319,8 +326,8 @@ async function compareLogoImages(figmaNodes: UINode[], domNodes: UINode[], fileI
     return {
       status: 'unknown' as const,
       score: 0,
-      message: 'Logo image match could not be confirmed. Comparison was stopped.',
-      checkName: 'Logo image match check',
+      message: 'Design identity could not be confirmed. Comparison was stopped.',
+      checkName: 'Design identity match check',
       reason: 'Logo candidates were found, but one or more logo images could not be rendered for comparison.',
       figmaSignals: figmaLabels,
       targetSignals: targetLabels,
@@ -334,12 +341,12 @@ async function compareLogoImages(figmaNodes: UINode[], domNodes: UINode[], fileI
     status: matched ? 'matched' as const : 'mismatch' as const,
     score,
     message: matched
-      ? 'Logo image matched in Figma and target URL. Test comparison begins.'
-      : 'Target URL and Figma design are not matched because the logo image is different. Comparison was stopped.',
-    checkName: 'Logo image match check',
+      ? 'Figma design file and target URL matched. Test comparison begins.'
+      : 'Figma design file and target URL are not the same. Comparison was stopped.',
+    checkName: 'Design identity match check',
     reason: matched
-      ? `The best logo image match scored ${score}%, so the target URL is treated as the same design.`
-      : `The best logo image match scored ${score}%, below the required ${LOGO_IMAGE_MATCH_THRESHOLD}%.`,
+      ? `The strongest visual identity match scored ${score}%, so the target URL is treated as the same design.`
+      : `The strongest visual identity match scored ${score}%, below the required ${LOGO_IMAGE_MATCH_THRESHOLD}%.`,
     figmaSignals: figmaLabels,
     targetSignals: targetLabels,
     matchedSignals: matched ? [`${candidateLabel(best.figma)} -> ${candidateLabel(best.target)}`] : [],
@@ -356,8 +363,8 @@ async function compareLogoImagesFromHtml(figmaNodes: UINode[], targetLogoImages:
     return {
       status: 'unknown' as const,
       score: 0,
-      message: 'Logo image match could not be confirmed. Comparison was stopped.',
-      checkName: 'Logo image match check',
+      message: 'Design identity could not be confirmed. Comparison was stopped.',
+      checkName: 'Design identity match check',
       reason: figmaLogoCandidates.length === 0
         ? 'No logo image candidate was found in the selected Figma frame/component.'
         : 'No logo image candidate was found on the target URL.',
@@ -400,8 +407,8 @@ async function compareLogoImagesFromHtml(figmaNodes: UINode[], targetLogoImages:
     return {
       status: 'unknown' as const,
       score: 0,
-      message: 'Logo image match could not be confirmed. Comparison was stopped.',
-      checkName: 'Logo image match check',
+      message: 'Design identity could not be confirmed. Comparison was stopped.',
+      checkName: 'Design identity match check',
       reason: 'Logo candidates were found, but one or more logo images could not be downloaded for comparison.',
       figmaSignals: figmaLabels,
       targetSignals: targetLabels,
@@ -415,12 +422,12 @@ async function compareLogoImagesFromHtml(figmaNodes: UINode[], targetLogoImages:
     status: matched ? 'matched' as const : 'mismatch' as const,
     score,
     message: matched
-      ? 'Logo image matched in Figma and target URL. Test comparison begins.'
-      : 'Target URL and Figma design are not matched because the logo image is different. Comparison was stopped.',
-    checkName: 'Logo image match check',
+      ? 'Figma design file and target URL matched. Test comparison begins.'
+      : 'Figma design file and target URL are not the same. Comparison was stopped.',
+    checkName: 'Design identity match check',
     reason: matched
-      ? `The best logo image match scored ${score}%, so the target URL is treated as the same design.`
-      : `The best logo image match scored ${score}%, below the required ${LOGO_IMAGE_MATCH_THRESHOLD}%.`,
+      ? `The strongest visual identity match scored ${score}%, so the target URL is treated as the same design.`
+      : `The strongest visual identity match scored ${score}%, below the required ${LOGO_IMAGE_MATCH_THRESHOLD}%.`,
     figmaSignals: figmaLabels,
     targetSignals: targetLabels,
     matchedSignals: matched ? [`${candidateLabel(best.figma)} -> ${normalizeSignal(best.target.label || best.target.url)}`] : [],
